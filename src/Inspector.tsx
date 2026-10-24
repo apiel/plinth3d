@@ -67,6 +67,14 @@ export function Inspector({ shape, count, layers, readOnly, onChange, onDuplicat
         <label className="field checkbox">
           <input
             type="checkbox"
+            checked={!shape.hidden}
+            onChange={(e) => onChange(shape.id, { hidden: !e.target.checked })}
+          />
+          <span>Visible</span>
+        </label>
+        <label className="field checkbox">
+          <input
+            type="checkbox"
             checked={shape.hole}
             onChange={(e) => onChange(shape.id, { hole: e.target.checked })}
           />

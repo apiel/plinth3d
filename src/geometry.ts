@@ -7,7 +7,7 @@ import Module, { type Manifold, type ManifoldToplevel, type Mat4 } from 'manifol
 // its HTML fallback instead, and the engine never loads.
 import manifoldWasmUrl from 'manifold-3d/manifold.wasm?url';
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
-import type { MeshGeometry, Shape, Vec3 } from './model';
+import { createId, type MeshGeometry, type Shape, type Vec3 } from './model';
 
 const DEG_TO_RAD = Math.PI / 180;
 const CYLINDER_SEGMENTS = 64;
@@ -262,4 +262,43 @@ export function resizeAlongAxis(shape: Shape, axis: number, sign: number, extent
   const dir = new Vector3().setComponent(axis, 1).applyQuaternion(shapeQuaternion(shape));
   const position = shape.position.map((value, i) => Math.round((value + (dir.getComponent(i) * change) / 2) * 1000) / 1000) as Vec3;
   return { size, position };
+}
+
+interface Frame {
+  origin: Vector3;
+  scale: Vector3;
+  position: Vector3;
+  quaternion: Quaternion;
+}
+
+/**
+ * The shapes a merged object was made from, moved and resized to match the merged object as it is now.
+ * Each restored shape gets a new id, so a clone of a merged object does not clash with the original.
+ */
+export function restoreSources(merged: Shape): Shape[] {
+  const frame: Frame = {
+    origin: new Vector3(...(merged.sourcePosition ?? merged.position)),
+    scale: new Vector3(...merged.size).divide(new Vector3(...(merged.baseSize ?? merged.size))),
+    position: new Vector3(...merged.position),
+    quaternion: shapeQuaternion(merged),
+  };
+  return (merged.sources ?? []).map((source) => mapShape(source, frame));
+}
+
+function mapPoint(point: Vec3, frame: Frame): Vec3 {
+  const v = new Vector3(...point).sub(frame.origin).multiply(frame.scale).applyQuaternion(frame.quaternion).add(frame.position);
+  return [round3(v.x), round3(v.y), round3(v.z)];
+}
+
+function mapShape(shape: Shape, frame: Frame): Shape {
+  const rotation = new Euler().setFromQuaternion(frame.quaternion.clone().multiply(shapeQuaternion(shape)), 'XYZ');
+  return {
+    ...shape,
+    id: createId(),
+    position: mapPoint(shape.position, frame),
+    rotation: [rotation.x, rotation.y, rotation.z].map((r) => round3(r / DEG_TO_RAD)) as Vec3,
+    size: shape.size.map((value, i) => round3(value * frame.scale.getComponent(i))) as Vec3,
+    sourcePosition: shape.sourcePosition ? mapPoint(shape.sourcePosition, frame) : undefined,
+    sources: shape.sources?.map((child) => mapShape(child, frame)),
+  };
 }

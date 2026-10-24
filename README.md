@@ -13,6 +13,8 @@ Shapes are combined with holes, and the result is exported as an STL file for yo
 - While moving or resizing, a readout card follows the cursor. A move shows only the moving axes, with the distance moved and the distance from the plan centre. Type into it for an exact value.
 - The edge you hover lightens, and the edge you press turns blue.
 - An orange arrow starts beside the hovered edge and points along the axis it will move, in the direction it grows.
+- Shift + drag on empty space draws a rectangle that adds the shapes inside it to the selection.
+- Hide a shape with its eye button in the layer list, or untick Visible in Properties. Hidden shapes are left out of the scene, the result and the export.
 - Rename a shape by double-clicking its name in the layer list, or in the Name field of the Properties panel.
 - Rotate with the rotate gizmo.
 - Resize by dragging an edge of the dashed box around the selected shape. The edge changes one dimension at a time. Click the edge to switch between its two axes; the readout shows the one that is active. The opposite face stays in place. Each drag is one undo step.
@@ -21,7 +23,7 @@ Shapes are combined with holes, and the result is exported as an STL file for yo
 - Layers, like Photoshop: show/hide, lock, rename, create and delete. Each shape belongs to one layer.
 - Properties panel for exact size, position, rotation, colour, layer and hole flag.
 - Undo (Ctrl+Z), clone (Ctrl+D), delete (Del), and clear the selection with Escape.
-- Select several shapes with Shift+click, then Merge (Ctrl+G). The holes cut the solids, and the result becomes one object with one colour. It moves and resizes like a primitive. Undo (Ctrl+Z) brings the separate shapes back.
+- Select several shapes with Shift+click, then Merge (G). Unmerge (U) brings the original shapes back, moved and resized to match. The holes cut the solids, and the result becomes one object with one colour. It moves and resizes like a primitive. Undo (Ctrl+Z) brings the separate shapes back.
 - Hole: a hole cuts the solids it is merged with. Until a merge, it has no effect.
 - Result view: preview the combined model with holes cut.
 - Export STL (binary, millimetres, Z-up for slicers).
@@ -45,6 +47,7 @@ npm run build    # type-check and build to dist/
 | B / C / S | Add a box / cylinder / sphere to the plan |
 | M / R | Move / rotate tool |
 | G | Merge the selection (Ctrl+G also works) |
+| U | Unmerge: bring back the shapes a merged object was made from |
 | H | Hole: toggle the selection as a hole |
 | Ctrl+A | Select all visible shapes |
 | Ctrl+D | Clone |

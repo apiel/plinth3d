@@ -17,7 +17,7 @@ import {
   type ShapeType,
   type Vec3,
 } from './model';
-import { encodeBinarySTL, loadEngine, mergeShapes, resizeAlongAxis, resultMesh } from './geometry';
+import { encodeBinarySTL, loadEngine, mergeShapes, restoreSources, resizeAlongAxis, resultMesh } from './geometry';
 
 const AUTOSAVE_KEY = 'plinth3d:autosave';
 const HISTORY_LIMIT = 100;
@@ -273,6 +273,9 @@ export default function App() {
       color: firstSolid.color,
       hole: false,
       mesh: merged.geometry,
+      // Kept so Unmerge can bring the original shapes back.
+      sources: selectedShapes,
+      sourcePosition: merged.position,
     };
     const ids = selectedShapes.map((s) => s.id);
     commit({ ...project, shapes: [...project.shapes.filter((s) => !ids.includes(s.id)), shape] });
@@ -280,6 +283,21 @@ export default function App() {
     setReadout(null);
   };
 
+
+  // Bring back the shapes a merged object was made from.
+  const unmergeSelected = () => {
+    const targets = selectedShapes.filter((s) => s.sources && s.sources.length > 0);
+    if (targets.length === 0) {
+      setNotice('Select a merged object to unmerge it.');
+      return;
+    }
+    if (selectionLocked) return;
+    const restored = targets.flatMap((t) => restoreSources(t));
+    const ids = targets.map((t) => t.id);
+    commit({ ...project, shapes: [...project.shapes.filter((s) => !ids.includes(s.id)), ...restored] });
+    setSelection(restored.map((s) => s.id));
+    setReadout(null);
+  };
 
   // Turn the selection into holes, or back into solids.
   const toggleHoleSelected = () => {
@@ -371,6 +389,8 @@ export default function App() {
         setGizmoMode('rotate');
       } else if (plain && key === 'g') {
         mergeSelected();
+      } else if (plain && key === 'u') {
+        unmergeSelected();
       } else if (plain && key === 'h') {
         toggleHoleSelected();
       } else if (plain && key === 'b') {
@@ -514,6 +534,15 @@ export default function App() {
           </button>
           <button
             type="button"
+            onClick={unmergeSelected}
+            disabled={!selectedShapes.some((s) => s.sources && s.sources.length > 0)}
+            title="Unmerge: bring back the shapes this object was made from (U)"
+          >
+            <Label text="Unmerge" at={0} />
+            <KeyHint k="U" />
+          </button>
+          <button
+            type="button"
             className={selectedShapes.length > 0 && selectedShapes[selectedShapes.length - 1].hole ? 'toggled' : ''}
             onClick={toggleHoleSelected}
             disabled={selectedShapes.length === 0}
@@ -576,6 +605,13 @@ export default function App() {
           onDelete={deleteLayer}
           onSelect={(id, additive) => selectShape(id, additive)}
           onRenameShape={(id, name) => updateShape(id, { name })}
+          onToggleShapeHidden={(id) => {
+            const shape = project.shapes.find((s) => s.id === id);
+            if (!shape) return;
+            // A hidden shape cannot stay selected.
+            if (!shape.hidden) setSelection(selection.filter((x) => x !== id));
+            updateShape(id, { hidden: !shape.hidden });
+          }}
         />
       </aside>
 
@@ -597,6 +633,7 @@ export default function App() {
           onReadoutShow={setReadout}
           snap={snap}
           readout={readout}
+          onMarquee={(ids) => setSelection([...selection.filter((x) => !ids.includes(x)), ...ids])}
           onShapeLive={shapeLive}
         />
         <footer className="statusbar">

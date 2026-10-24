@@ -494,3 +494,18 @@ select {
   box-shadow: none;
 }
 
+
+/* Hidden shapes stay in the list, dimmed. */
+.shape.hidden {
+  opacity: 0.5;
+}
+
+/* Rubber-band selection (Shift + drag on empty space). */
+.marquee {
+  position: absolute;
+  display: none;
+  border: 1px dashed var(--accent);
+  background: rgba(79, 140, 255, 0.12);
+  pointer-events: none;
+  z-index: 3;
+}

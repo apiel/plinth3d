@@ -32,9 +32,14 @@ export interface Shape {
   color: string;
   /** Holes are subtracted from the solids in the same visible layers. */
   hole: boolean;
+  /** A hidden shape is kept in the project but left out of the scene, the result and the export. */
+  hidden?: boolean;
   /** Merged shapes only: the geometry, and the size it was made at. Resizing scales it from baseSize. */
   mesh?: MeshGeometry;
   baseSize?: Vec3;
+  /** Merged shapes only: the shapes they were made from, and the point they were made around. */
+  sources?: Shape[];
+  sourcePosition?: Vec3;
 }
 
 export interface Project {
@@ -99,7 +104,7 @@ export function createShape(
 /** Shapes that take part in the output: their layer is visible. */
 export function visibleShapes(project: Project): Shape[] {
   const visibleLayers = new Set(project.layers.filter((l) => l.visible).map((l) => l.id));
-  return project.shapes.filter((s) => visibleLayers.has(s.layerId));
+  return project.shapes.filter((s) => visibleLayers.has(s.layerId) && !s.hidden);
 }
 
 export function serializeProject(project: Project): string {

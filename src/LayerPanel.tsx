@@ -13,6 +13,7 @@ interface LayerPanelProps {
   onDelete: (layerId: string) => void;
   onSelect: (shapeId: string, additive: boolean) => void;
   onRenameShape: (shapeId: string, name: string) => void;
+  onToggleShapeHidden: (shapeId: string) => void;
 }
 
 /** Photoshop-style layer list. Each layer lists the shapes it contains. */
@@ -106,7 +107,7 @@ export function LayerPanel(props: LayerPanelProps) {
                   {members.map((shape) => (
                     <li
                       key={shape.id}
-                      className={props.selectedIds.includes(shape.id) ? 'shape selected' : 'shape'}
+                      className={`${props.selectedIds.includes(shape.id) ? 'shape selected' : 'shape'}${shape.hidden ? ' hidden' : ''}`}
                       onClick={(e) => props.onSelect(shape.id, e.shiftKey)}
                     >
                       <span className="swatch" style={{ background: shape.hole ? '#ff4d4d' : shape.color }} />
@@ -138,6 +139,17 @@ export function LayerPanel(props: LayerPanelProps) {
                         </span>
                       )}
                       {shape.hole && <span className="badge">hole</span>}
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title={shape.hidden ? 'Show shape' : 'Hide shape'}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          props.onToggleShapeHidden(shape.id);
+                        }}
+                      >
+                        {shape.hidden ? '·' : '👁'}
+                      </button>
                     </li>
                   ))}
                 </ul>

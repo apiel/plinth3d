@@ -97,6 +97,8 @@ interface ViewportProps {
   onReadoutEdit: (target: ReadoutTarget, index: number, value: number) => void;
   /** Shows the readout for a target without adding an undo step. */
   onReadoutShow: (target: ReadoutTarget) => void;
+  /** Shift + drag on empty space selects the shapes inside the rectangle. */
+  onMarquee: (ids: string[]) => void;
   /** Called on every step of a drag. Does not add undo steps. */
   onShapeLive: (id: string, patch: Partial<Shape>) => void;
 }
@@ -126,6 +128,7 @@ type Drag = {
 export function Viewport(props: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const readoutRef = useRef<HTMLDivElement>(null);
+  const marqueeRef = useRef<HTMLDivElement>(null);
   const handlersRef = useRef<ViewportProps>(props);
   handlersRef.current = props;
 
@@ -341,6 +344,8 @@ export function Viewport(props: ViewportProps) {
     let pressAt: { x: number; y: number } | null = null;
     let pressedShape: string | null = null;
     let drag: Drag | null = null;
+    // Shift + drag on empty space: where the rubber-band rectangle started, in container pixels.
+    let marquee: { x0: number; y0: number } | null = null;
 
     const aim = (event: PointerEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -460,7 +465,15 @@ export function Viewport(props: ViewportProps) {
 
       const hit = raycaster.intersectObjects(objects.children, true).find((h) => h.object instanceof Mesh);
       const id = hit ? shapeIdOf(hit.object) : null;
-      if (!hit || !id) return;
+      if (!hit || !id) {
+        // Shift + drag on empty space starts a rubber-band selection. Orbit stays off for this drag.
+        if (event.shiftKey) {
+          const box = container.getBoundingClientRect();
+          marquee = { x0: event.clientX - box.left, y0: event.clientY - box.top };
+          orbit.enabled = false;
+        }
+        return;
+      }
       pressedShape = id;
       if (transform.axis === 'XYZ') event.stopImmediatePropagation();
 
@@ -470,7 +483,53 @@ export function Viewport(props: ViewportProps) {
       if (!isLocked(shape)) startMove(shape, hit.point);
     };
 
+    // The rubber-band rectangle, from where it started to the pointer.
+    const updateMarquee = (event: PointerEvent) => {
+      if (!marquee) return;
+      const box = container.getBoundingClientRect();
+      const x1 = event.clientX - box.left;
+      const y1 = event.clientY - box.top;
+      const style = marqueeRef.current?.style;
+      if (!style) return;
+      style.display = 'block';
+      style.left = `${Math.min(marquee.x0, x1)}px`;
+      style.top = `${Math.min(marquee.y0, y1)}px`;
+      style.width = `${Math.abs(x1 - marquee.x0)}px`;
+      style.height = `${Math.abs(y1 - marquee.y0)}px`;
+    };
+
+    // Selects every shape whose centre falls inside the rectangle.
+    const finishMarquee = (event: PointerEvent) => {
+      if (!marquee) return;
+      const box = container.getBoundingClientRect();
+      const x1 = event.clientX - box.left;
+      const y1 = event.clientY - box.top;
+      const left = Math.min(marquee.x0, x1);
+      const right = Math.max(marquee.x0, x1);
+      const top = Math.min(marquee.y0, y1);
+      const bottom = Math.max(marquee.y0, y1);
+      const moved = Math.hypot(x1 - marquee.x0, y1 - marquee.y0);
+      marquee = null;
+      orbit.enabled = true;
+      if (marqueeRef.current) marqueeRef.current.style.display = 'none';
+      if (moved <= DRAG_THRESHOLD) return;
+
+      const ids: string[] = [];
+      objects.traverse((node) => {
+        if (!(node instanceof Group) || !node.userData.shapeId) return;
+        const p = node.getWorldPosition(scratch).project(camera);
+        const x = ((p.x + 1) / 2) * box.width;
+        const y = ((1 - p.y) / 2) * box.height;
+        if (x >= left && x <= right && y >= top && y <= bottom) ids.push(node.userData.shapeId as string);
+      });
+      handlersRef.current.onMarquee(ids);
+    };
+
     const onMove = (event: PointerEvent) => {
+      if (marquee) {
+        updateMarquee(event);
+        return;
+      }
       if (!drag) {
         // Hover highlight on the face handles.
         aim(event);
@@ -521,6 +580,10 @@ export function Viewport(props: ViewportProps) {
     };
 
     const onUp = (event: PointerEvent) => {
+      if (marquee) {
+        finishMarquee(event);
+        return;
+      }
       if (drag) {
         // A click on an edge (no drag) switches it to its other axis and shows that value.
         if (drag.kind === 'resize' && !drag.moved) {
@@ -608,7 +671,7 @@ export function Viewport(props: ViewportProps) {
     }
 
     for (const shape of shapes) {
-      if (!visibleLayers.has(shape.layerId)) continue;
+      if (!visibleLayers.has(shape.layerId) || shape.hidden) continue;
       const group = new Group();
       group.userData.shapeId = shape.id;
       group.quaternion.copy(shapeQuaternion(shape));
@@ -679,6 +742,7 @@ export function Viewport(props: ViewportProps) {
 
   return (
     <div className="viewport" ref={containerRef}>
+      <div className="marquee" ref={marqueeRef} />
       <div className="readout" ref={readoutRef}>
         {readoutShape && props.readout && (
           <ReadoutFields target={props.readout} shape={readoutShape} step={props.snap} onEdit={props.onReadoutEdit} />
