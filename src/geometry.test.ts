@@ -21,10 +21,26 @@ describe('geometry', () => {
     const hole = createShape('cylinder', layerId, [solid]);
     hole.hole = true;
     hole.size = [10, 30, 10];
+    // Only shapes merged into the same group interact.
+    solid.groupId = 'group';
+    hole.groupId = 'group';
     const result = buildResult(wasm, [solid, hole])!;
     // A cylinder of radius 5 and height 20 inside the box (it stands through it).
     const removed = Math.PI * 5 * 5 * 20;
     expect(result.volume()).toBeCloseTo(20 * 20 * 20 - removed, -1);
+    result.delete();
+  });
+
+  it('does not cut solids that are not merged with the hole', async () => {
+    const wasm = await loadEngine();
+    const layerId = createProject().layers[0].id;
+    const solid = createShape('box', layerId, []);
+    solid.size = [20, 20, 20];
+    const hole = createShape('cylinder', layerId, [solid]);
+    hole.hole = true;
+    hole.size = [10, 30, 10];
+    const result = buildResult(wasm, [solid, hole])!;
+    expect(result.volume()).toBeCloseTo(20 * 20 * 20, 3);
     result.delete();
   });
 

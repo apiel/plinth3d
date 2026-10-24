@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ManifoldToplevel } from 'manifold-3d';
 import { Viewport, type DragPlane, type GizmoMode, type ReadoutTarget, type Theme } from './Viewport';
-import { BoxIcon, CylinderIcon, MoonIcon, SphereIcon, SunIcon } from './Icons';
+import { BoxIcon, CylinderIcon, MoonIcon, SphereIcon, SunIcon, TrashIcon, UndoIcon } from './Icons';
 import { LayerPanel } from './LayerPanel';
 import { Inspector } from './Inspector';
 import {
@@ -73,7 +73,10 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export default function App() {
   const [project, setProject] = useState<Project>(() => loadAutosave() ?? createProject());
   const [history, setHistory] = useState<Project[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Selected shape ids. The last one is the primary: the Inspector shows it.
+  const [selection, setSelection] = useState<string[]>([]);
+  const selectedId = selection[selection.length - 1] ?? null;
+  const setSelectedId = (id: string | null) => setSelection(id ? [id] : []);
   const [activeLayerId, setActiveLayerId] = useState<string>(project.layers[0].id);
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>('translate');
   const [showResult, setShowResult] = useState(false);
@@ -128,6 +131,28 @@ export default function App() {
   }, [notice]);
 
   const selected = project.shapes.find((s) => s.id === selectedId) ?? null;
+  const selectedShapes = project.shapes.filter((s) => selection.includes(s.id));
+
+  // Click a shape to select it, or all of its group. Shift adds or removes it.
+  const selectShape = (id: string | null, additive: boolean) => {
+    if (id === null) {
+      if (!additive) setSelection([]);
+      return;
+    }
+    const clicked = project.shapes.find((s) => s.id === id);
+    if (!clicked) return;
+    const ids = project.shapes
+      .filter((s) => s.id === id || (clicked.groupId !== undefined && s.groupId === clicked.groupId))
+      .map((s) => s.id);
+    if (!additive) {
+      setSelection(ids);
+    } else if (ids.every((x) => selection.includes(x))) {
+      setSelection(selection.filter((x) => !ids.includes(x)));
+    } else {
+      setSelection([...selection.filter((x) => !ids.includes(x)), ...ids]);
+    }
+    setActiveLayerId(clicked.layerId);
+  };
   const layerOf = (id: string) => project.layers.find((l) => l.id === id);
   const selectedLayerLocked = selected ? Boolean(layerOf(selected.layerId)?.locked) : false;
 
@@ -203,22 +228,65 @@ export default function App() {
 
   const toggleTheme = () => setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
 
-  const duplicateSelected = () => {
-    if (!selected || selectedLayerLocked) return;
-    const copy: Shape = {
-      ...selected,
-      id: createId(),
-      name: `${selected.name} copy`,
-      position: [selected.position[0] + 10, selected.position[1], selected.position[2] + 10] as Vec3,
-    };
-    commit({ ...project, shapes: [...project.shapes, copy] });
-    setSelectedId(copy.id);
+  const selectionLocked = selectedShapes.some((s) => layerOf(s.layerId)?.locked);
+
+  // Clone the selection. Groups are cloned as groups.
+  const cloneSelected = () => {
+    if (selectedShapes.length === 0 || selectionLocked) return;
+    const groupIds = new Map<string, string>();
+    const clones = selectedShapes.map((s): Shape => {
+      let groupId: string | undefined;
+      if (s.groupId) {
+        if (!groupIds.has(s.groupId)) groupIds.set(s.groupId, createId());
+        groupId = groupIds.get(s.groupId);
+      }
+      return {
+        ...s,
+        id: createId(),
+        name: `${s.name} copy`,
+        groupId,
+        position: [s.position[0] + 10, s.position[1], s.position[2] + 10] as Vec3,
+      };
+    });
+    commit({ ...project, shapes: [...project.shapes, ...clones] });
+    setSelection(clones.map((c) => c.id));
   };
 
   const deleteSelected = () => {
-    if (!selected || selectedLayerLocked) return;
-    commit({ ...project, shapes: project.shapes.filter((s) => s.id !== selected.id) });
-    setSelectedId(null);
+    if (selectedShapes.length === 0 || selectionLocked) return;
+    const ids = selectedShapes.map((s) => s.id);
+    commit({ ...project, shapes: project.shapes.filter((s) => !ids.includes(s.id)) });
+    setSelection([]);
+  };
+
+  // Merge the selection into one group. Its holes cut its solids.
+  const mergeSelected = () => {
+    if (selectedShapes.length < 2) {
+      setNotice('Select at least two shapes to merge them.');
+      return;
+    }
+    if (selectionLocked) return;
+    const groupId = createId();
+    const ids = selectedShapes.map((s) => s.id);
+    commit({ ...project, shapes: project.shapes.map((s) => (ids.includes(s.id) ? { ...s, groupId } : s)) });
+  };
+
+  // Ungroup every group that the selection touches.
+  const ungroupSelected = () => {
+    const groupIds = new Set(selectedShapes.map((s) => s.groupId).filter((g): g is string => g !== undefined));
+    if (groupIds.size === 0 || selectionLocked) return;
+    commit({
+      ...project,
+      shapes: project.shapes.map((s) => (s.groupId && groupIds.has(s.groupId) ? { ...s, groupId: undefined } : s)),
+    });
+  };
+
+  // Turn the selection into holes, or back into solids.
+  const toggleHoleSelected = () => {
+    if (selectedShapes.length === 0 || selectionLocked) return;
+    const hole = !selectedShapes[selectedShapes.length - 1].hole;
+    const ids = selectedShapes.map((s) => s.id);
+    commit({ ...project, shapes: project.shapes.map((s) => (ids.includes(s.id) ? { ...s, hole } : s)) });
   };
 
   const addLayer = () => {
@@ -284,7 +352,11 @@ export default function App() {
         undo();
       } else if (mod && event.key.toLowerCase() === 'd') {
         event.preventDefault();
-        duplicateSelected();
+        cloneSelected();
+      } else if (mod && event.key.toLowerCase() === 'g') {
+        event.preventDefault();
+        if (event.shiftKey) ungroupSelected();
+        else mergeSelected();
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         deleteSelected();
       } else if (event.key.toLowerCase() === 'w') {
@@ -292,7 +364,7 @@ export default function App() {
       } else if (event.key.toLowerCase() === 'e') {
         setGizmoMode('rotate');
       } else if (event.key === 'Escape') {
-        setSelectedId(null);
+        setSelection([]);
         setReadout(null);
       }
     };
@@ -387,14 +459,45 @@ export default function App() {
           </select>
         </div>
         <div className="group">
-          <button type="button" onClick={undo} disabled={history.length === 0} title="Undo (Ctrl+Z)">
-            Undo
+          <button
+            type="button"
+            className="tool-icon"
+            onClick={undo}
+            disabled={history.length === 0}
+            aria-label="Undo"
+            title="Undo (Ctrl+Z)"
+          >
+            <UndoIcon />
           </button>
-          <button type="button" onClick={duplicateSelected} disabled={!selected} title="Duplicate (Ctrl+D)">
-            Duplicate
+          <button type="button" onClick={cloneSelected} disabled={selectedShapes.length === 0} title="Clone (Ctrl+D)">
+            Clone
           </button>
-          <button type="button" onClick={deleteSelected} disabled={!selected} title="Delete (Del)">
-            Delete
+          <button
+            type="button"
+            className="tool-icon"
+            onClick={deleteSelected}
+            disabled={selectedShapes.length === 0}
+            aria-label="Delete"
+            title="Delete (Del)"
+          >
+            <TrashIcon />
+          </button>
+        </div>
+        <div className="group">
+          <button type="button" onClick={mergeSelected} disabled={selectedShapes.length < 2} title="Merge the selection into one group (Ctrl+G)">
+            Merge
+          </button>
+          <button type="button" onClick={ungroupSelected} disabled={!selectedShapes.some((s) => s.groupId)} title="Ungroup (Ctrl+Shift+G)">
+            Ungroup
+          </button>
+          <button
+            type="button"
+            className={selectedShapes.length > 0 && selectedShapes[selectedShapes.length - 1].hole ? 'toggled' : ''}
+            onClick={toggleHoleSelected}
+            disabled={selectedShapes.length === 0}
+            title="Hole: cuts the solids it is merged with"
+          >
+            Hole
           </button>
         </div>
         <div className="group">
@@ -442,17 +545,13 @@ export default function App() {
           layers={project.layers}
           shapes={project.shapes}
           activeLayerId={activeLayerId}
-          selectedId={selectedId}
+          selectedIds={selection}
           onActivate={setActiveLayerId}
           onAdd={addLayer}
           onRename={renameLayer}
           onToggle={toggleLayer}
           onDelete={deleteLayer}
-          onSelect={(id) => {
-            setSelectedId(id);
-            const shape = project.shapes.find((s) => s.id === id);
-            if (shape) setActiveLayerId(shape.layerId);
-          }}
+          onSelect={(id, additive) => selectShape(id, additive)}
         />
       </aside>
 
@@ -462,15 +561,12 @@ export default function App() {
           layers={project.layers}
           shapes={project.shapes}
           selectedId={selectedId}
+          selection={selection}
           gizmoMode={gizmoMode}
           result={result}
           showResult={showResult}
           theme={theme}
-          onSelect={(id) => {
-            setSelectedId(id);
-            const shape = id ? project.shapes.find((s) => s.id === id) : undefined;
-            if (shape) setActiveLayerId(shape.layerId);
-          }}
+          onSelect={selectShape}
           dragPlane={dragPlane}
           onEditStart={startEdit}
           onReadoutEdit={editReadout}
@@ -486,11 +582,12 @@ export default function App() {
 
       <aside className="inspector">
         <Inspector
-          shape={selected}
+          shape={selection.length === 1 ? selected : null}
+          count={selection.length}
           layers={project.layers}
           readOnly={selectedLayerLocked}
           onChange={updateShape}
-          onDuplicate={duplicateSelected}
+          onDuplicate={cloneSelected}
           onDelete={deleteSelected}
         />
       </aside>

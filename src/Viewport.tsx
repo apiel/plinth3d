@@ -10,6 +10,7 @@ import {
   Euler,
   GridHelper,
   Group,
+  MOUSE,
   type Intersection,
   LineBasicMaterial,
   LineDashedMaterial,
@@ -77,6 +78,7 @@ interface ViewportProps {
   layers: Layer[];
   shapes: Shape[];
   selectedId: string | null;
+  selection: string[];
   gizmoMode: GizmoMode;
   dragPlane: DragPlane;
   snap: number;
@@ -84,7 +86,7 @@ interface ViewportProps {
   result: MeshData | null;
   showResult: boolean;
   theme: Theme;
-  onSelect: (id: string | null) => void;
+  onSelect: (id: string | null, additive: boolean) => void;
   /** Called once when a drag actually starts changing a shape. Used for one undo step. */
   onEditStart: (target: ReadoutTarget | null) => void;
   /** Called when a value is typed into the readout card. */
@@ -98,7 +100,7 @@ type Drag = {
   moved: boolean;
   target: ReadoutTarget;
 } & (
-  | { kind: 'move'; id: string; plane: Plane; start: Vector3; startPosition: Vec3 }
+  | { kind: 'move'; plane: Plane; start: Vector3; members: { id: string; start: Vec3 }[] }
   | {
       kind: 'resize';
       id: string;
@@ -153,10 +155,14 @@ export function Viewport(props: ViewportProps) {
 
     const orbit = new OrbitControls(camera, renderer.domElement);
     orbit.enableDamping = true;
+    // Middle and right buttons pan the view; the left button rotates it.
+    orbit.mouseButtons = { LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.PAN, RIGHT: MOUSE.PAN };
 
     const transform = new TransformControls(camera, renderer.domElement);
     transform.setTranslationSnap(1);
     transform.setRotationSnap(15 * DEG_TO_RAD);
+    // Where a gizmo drag started: the pivot (or the single shape) and every shape it moves.
+    let gizmoStart: { origin: Vector3; members: { id: string; start: Vec3 }[]; multi: boolean } | null = null;
     transform.addEventListener('dragging-changed', (event) => {
       const dragging = (event as unknown as { value: boolean }).value;
       orbit.enabled = !dragging;
@@ -164,30 +170,55 @@ export function Viewport(props: ViewportProps) {
       if (!view) return;
       view.gizmoDragging = dragging;
       const object = transform.object;
-      const id = object?.userData.shapeId as string | undefined;
-      if (!dragging || !object || !id) return;
-      const shape = handlersRef.current.shapes.find((s) => s.id === id);
-      if (!shape) return;
+      if (!dragging || !object) {
+        gizmoStart = null;
+        return;
+      }
+      const multi = object.userData.isPivot === true;
+      const ids = multi ? handlersRef.current.selection : [object.userData.shapeId as string];
+      const members = ids
+        .map((id) => handlersRef.current.shapes.find((s) => s.id === id))
+        .filter((s): s is Shape => s !== undefined)
+        .map((s) => ({ id: s.id, start: [...s.position] as Vec3 }));
+      const primary = members[members.length - 1];
+      if (!primary) return;
+      gizmoStart = { origin: object.position.clone(), members, multi };
       // The first step of the drag is one undo step. Rotation shows no readout.
-      const translating = handlersRef.current.gizmoMode === 'translate';
+      const translating = transform.mode === 'translate';
       handlersRef.current.onEditStart(
         translating
-          ? { id, kind: 'move', axes: GIZMO_AXES[transform.axis ?? 'XYZ'] ?? [0, 1, 2], start: [...shape.position] as Vec3 }
+          ? { id: primary.id, kind: 'move', axes: GIZMO_AXES[transform.axis ?? 'XYZ'] ?? [0, 1, 2], start: primary.start }
           : null,
       );
     });
-    // Live: the shape follows the gizmo while it is dragged.
+    // Live: the shapes follow the gizmo while it is dragged.
     transform.addEventListener('objectChange', () => {
       const object = transform.object;
-      const id = object?.userData.shapeId as string | undefined;
-      if (!object || !id || !sceneRef.current?.gizmoDragging) return;
+      if (!object || !gizmoStart || !sceneRef.current?.gizmoDragging) return;
+      if (gizmoStart.multi) {
+        const delta = object.position.clone().sub(gizmoStart.origin);
+        for (const member of gizmoStart.members) {
+          const position = member.start.map((value, i) => round(value + delta.getComponent(i))) as Vec3;
+          handlersRef.current.onShapeLive(member.id, { position });
+        }
+        return;
+      }
+      const id = object.userData.shapeId as string | undefined;
+      if (!id) return;
       const rotation = new Euler().setFromQuaternion(object.quaternion, 'XYZ');
       handlersRef.current.onShapeLive(id, {
         position: [round(object.position.x), round(object.position.y), round(object.position.z)],
         rotation: [rotation.x, rotation.y, rotation.z].map((r) => round(r / DEG_TO_RAD)) as Vec3,
       });
     });
-    scene.add(transform);
+
+    // The coloured plane squares of the move gizmo are removed, with their pickers.
+    // Dragging the shape's body moves it in a plane instead (see the drag plane buttons).
+    const planeSquares: Object3D[] = [];
+    transform.traverse((node) => {
+      if (node.name === 'XY' || node.name === 'YZ' || node.name === 'XZ') planeSquares.push(node);
+    });
+    for (const square of planeSquares) square.parent?.remove(square);
 
     const objects = new Group();
     const resultGroup = new Group();
@@ -225,7 +256,7 @@ export function Viewport(props: ViewportProps) {
       const card = readoutRef.current;
       if (!card) return;
       const info = handlersRef.current.readout;
-      if (!info || info.id !== handlersRef.current.selectedId) {
+      if (!info || info.id !== handlersRef.current.selectedId || handlersRef.current.selection.length !== 1) {
         card.style.display = 'none';
         return;
       }
@@ -321,13 +352,19 @@ export function Viewport(props: ViewportProps) {
     // Dragging the body moves the shape within the chosen drag plane.
     const startMove = (shape: Shape, point: Vector3) => {
       const plane = new Plane().setFromNormalAndCoplanarPoint(DRAG_PLANE_NORMAL[handlersRef.current.dragPlane], point);
+      // Dragging a selected shape moves the whole selection; any other shape moves alone.
+      const selection = handlersRef.current.selection;
+      const ids = selection.includes(shape.id) ? selection : [shape.id];
+      const members = ids
+        .map((id) => handlersRef.current.shapes.find((s) => s.id === id))
+        .filter((s): s is Shape => s !== undefined)
+        .map((s) => ({ id: s.id, start: [...s.position] as Vec3 }));
       drag = {
         kind: 'move',
         moved: false,
-        id: shape.id,
         plane,
         start: point.clone(),
-        startPosition: [...shape.position] as Vec3,
+        members,
         target: {
           id: shape.id,
           kind: 'move',
@@ -338,7 +375,12 @@ export function Viewport(props: ViewportProps) {
       orbit.enabled = false;
     };
 
+    // Only the left button picks, selects and drags shapes. The others are for the view.
     const onDown = (event: PointerEvent) => {
+      if (event.button !== 0) {
+        pressAt = null;
+        return;
+      }
       trackCursor(event);
       pressAt = { x: event.clientX, y: event.clientY };
       pressedShape = null;
@@ -363,7 +405,7 @@ export function Viewport(props: ViewportProps) {
 
       const shape = shapeById(id);
       if (!shape) return;
-      if (handlersRef.current.selectedId !== id) handlersRef.current.onSelect(id);
+      if (!handlersRef.current.selection.includes(id)) handlersRef.current.onSelect(id, event.shiftKey);
       if (!isLocked(shape)) startMove(shape, hit.point);
     };
 
@@ -393,8 +435,10 @@ export function Viewport(props: ViewportProps) {
 
       if (drag.kind === 'move') {
         const delta = hit.sub(drag.start);
-        const position = drag.startPosition.map((value, i) => snapTo(value + delta.getComponent(i), handlersRef.current.snap)) as Vec3;
-        handlersRef.current.onShapeLive(drag.id, { position });
+        for (const member of drag.members) {
+          const position = member.start.map((value, i) => snapTo(value + delta.getComponent(i), handlersRef.current.snap)) as Vec3;
+          handlersRef.current.onShapeLive(member.id, { position });
+        }
         return;
       }
 
@@ -420,7 +464,7 @@ export function Viewport(props: ViewportProps) {
       pressAt = null;
       // A click on empty plan clears the selection.
       if (moved <= DRAG_THRESHOLD && pressedShape === null && transform.axis === null) {
-        handlersRef.current.onSelect(null);
+        handlersRef.current.onSelect(null, false);
       }
     };
 
@@ -428,6 +472,12 @@ export function Viewport(props: ViewportProps) {
     renderer.domElement.addEventListener('pointerdown', onDown, true);
     renderer.domElement.addEventListener('pointermove', onMove);
     renderer.domElement.addEventListener('pointerup', onUp);
+    // A middle press would otherwise start browser auto-scroll.
+    const onAuxDown = (event: MouseEvent) => {
+      if (event.button === 1) event.preventDefault();
+    };
+    renderer.domElement.addEventListener('mousedown', onAuxDown);
+    renderer.domElement.addEventListener('auxclick', onAuxDown);
 
     return () => {
       renderer.setAnimationLoop(null);
@@ -435,6 +485,8 @@ export function Viewport(props: ViewportProps) {
       renderer.domElement.removeEventListener('pointerdown', onDown, true);
       renderer.domElement.removeEventListener('pointermove', onMove);
       renderer.domElement.removeEventListener('pointerup', onUp);
+      renderer.domElement.removeEventListener('mousedown', onAuxDown);
+      renderer.domElement.removeEventListener('auxclick', onAuxDown);
       transform.dispose();
       orbit.dispose();
       renderer.dispose();
@@ -449,7 +501,7 @@ export function Viewport(props: ViewportProps) {
     // While the gizmo is dragged, the object already sits where the gizmo put it. Rebuilding now would drop the drag.
     if (!view || !props.engine || view.gizmoDragging) return;
     const { objects, transform } = view;
-    const { engine, shapes, layers, selectedId, showResult, theme } = props;
+    const { engine, shapes, layers, selection, showResult, theme } = props;
     const lockedLayers = new Set(layers.filter((l) => l.locked).map((l) => l.id));
     const visibleLayers = new Set(layers.filter((l) => l.visible).map((l) => l.id));
 
@@ -459,12 +511,28 @@ export function Viewport(props: ViewportProps) {
     view.resultGroup.visible = showResult;
     objects.visible = !showResult;
 
+    const selectedShapes = shapes.filter((s) => selection.includes(s.id) && visibleLayers.has(s.layerId));
+    const selectedSet = new Set(selectedShapes.map((s) => s.id));
+    const multi = selectedShapes.length > 1;
+    const editable = selectedShapes.every((s) => !lockedLayers.has(s.layerId));
+
+    // Several selected shapes sit under a pivot at their centre, so the gizmo moves them together.
+    const pivot = new Group();
+    pivot.userData.isPivot = true;
+    if (multi) {
+      const centre = new Vector3();
+      for (const shape of selectedShapes) centre.add(shapePosition(shape));
+      pivot.position.copy(centre.divideScalar(selectedShapes.length));
+      objects.add(pivot);
+    }
+
     for (const shape of shapes) {
       if (!visibleLayers.has(shape.layerId)) continue;
       const group = new Group();
       group.userData.shapeId = shape.id;
-      group.position.copy(shapePosition(shape));
       group.quaternion.copy(shapeQuaternion(shape));
+      const inPivot = multi && selectedSet.has(shape.id);
+      group.position.copy(inPivot ? shapePosition(shape).sub(pivot.position) : shapePosition(shape));
 
       const local = localPrimitive(engine, shape);
       const data = meshData(local);
@@ -472,20 +540,25 @@ export function Viewport(props: ViewportProps) {
       const mesh = new Mesh(toGeometry(data), shape.hole ? holeMaterial() : solidMaterial(shape.color));
       mesh.userData.shapeId = shape.id;
       group.add(mesh);
-      objects.add(group);
+      (inPivot ? pivot : objects).add(group);
 
-      if (shape.id === selectedId && !lockedLayers.has(shape.layerId) && !showResult) {
-        transform.attach(group);
+      if (selectedSet.has(shape.id) && !lockedLayers.has(shape.layerId) && !showResult) {
         group.add(boundingBox(shape.size, THEMES[theme].outline));
-        for (const handle of makeHandles(shape.size, THEMES[theme].outline)) {
-          group.add(handle);
-          view.handles.push(handle);
+        // Handles resize one shape, so they only show when a single shape is selected.
+        if (!multi) {
+          transform.attach(group);
+          for (const handle of makeHandles(shape.size, THEMES[theme].outline)) {
+            group.add(handle);
+            view.handles.push(handle);
+          }
         }
       }
     }
+    if (multi && editable && !showResult) transform.attach(pivot);
     paintHandles(view);
-    transform.setMode(props.gizmoMode);
-  }, [props.engine, props.shapes, props.layers, props.selectedId, props.showResult, props.gizmoMode, props.theme]);
+    // Rotation applies to one shape; a selection only moves.
+    transform.setMode(multi ? 'translate' : props.gizmoMode);
+  }, [props.engine, props.shapes, props.layers, props.selection, props.showResult, props.gizmoMode, props.theme]);
 
   // The move arrows snap to the same step as dragging.
   useEffect(() => {
@@ -519,7 +592,7 @@ export function Viewport(props: ViewportProps) {
   }, [props.result]);
 
   const readoutShape =
-    props.readout && props.readout.id === props.selectedId
+    props.readout && props.readout.id === props.selectedId && props.selection.length === 1
       ? props.shapes.find((s) => s.id === props.readout?.id)
       : undefined;
 

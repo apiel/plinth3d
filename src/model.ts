@@ -26,6 +26,8 @@ export interface Shape {
   color: string;
   /** Holes are subtracted from the solids in the same visible layers. */
   hole: boolean;
+  /** Shapes that share a groupId are merged: their holes cut their solids. Unset means ungrouped. */
+  groupId?: string;
 }
 
 export interface Project {

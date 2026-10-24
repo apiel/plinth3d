@@ -2,6 +2,8 @@ import type { Layer, Shape, Vec3 } from './model';
 
 interface InspectorProps {
   shape: Shape | null;
+  /** How many shapes are selected. The fields only edit a single shape. */
+  count: number;
   layers: Layer[];
   readOnly: boolean;
   onChange: (id: string, patch: Partial<Shape>) => void;
@@ -12,7 +14,17 @@ interface InspectorProps {
 const AXES = ['x', 'y', 'z'] as const;
 
 /** Edits the selected shape. Numbers are millimetres and degrees. */
-export function Inspector({ shape, layers, readOnly, onChange, onDuplicate, onDelete }: InspectorProps) {
+export function Inspector({ shape, count, layers, readOnly, onChange, onDuplicate, onDelete }: InspectorProps) {
+  if (!shape && count > 1) {
+    return (
+      <section className="panel">
+        <header className="panel-header">
+          <h2>Properties</h2>
+        </header>
+        <p className="hint">{count} shapes selected. Move them with the arrows or by dragging, or merge them with the Merge button.</p>
+      </section>
+    );
+  }
   if (!shape) {
     return (
       <section className="panel">

@@ -18,7 +18,9 @@ Shapes are combined with holes, and the result is exported as an STL file for yo
 - Holes: a shape marked as a hole is subtracted from all solids on visible layers.
 - Layers, like Photoshop: show/hide, lock, rename, create and delete. Each shape belongs to one layer.
 - Properties panel for exact size, position, rotation, colour, layer and hole flag.
-- Undo (Ctrl+Z), duplicate (Ctrl+D), delete (Del), and select with Escape.
+- Undo (Ctrl+Z), clone (Ctrl+D), delete (Del), and clear the selection with Escape.
+- Select several shapes with Shift+click. Merge them into one group (Ctrl+G) and ungroup them again (Ctrl+Shift+G). Clicking one shape of a group selects the whole group.
+- Hole: a shape marked as a hole cuts the solids it is merged with. An ungrouped hole cuts nothing.
 - Result view: preview the combined model with holes cut.
 - Export STL (binary, millimetres, Z-up for slicers).
 - Save and open projects as `.json` files. The project also autosaves in your browser.

@@ -95,6 +95,26 @@ function placedPrimitive(wasm: ManifoldToplevel, shape: Shape): Manifold {
  * The caller owns the returned manifold.
  */
 export function buildResult(wasm: ManifoldToplevel, shapes: Shape[]): Manifold | null {
+  // Each group is built on its own, so a hole only cuts the solids it is merged with.
+  // Ungrouped shapes each form a group of their own.
+  const groups = new Map<string, Shape[]>();
+  for (const shape of shapes) {
+    const key = shape.groupId ?? `solo:${shape.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), shape]);
+  }
+  const parts: Manifold[] = [];
+  for (const members of groups.values()) {
+    const part = buildGroup(wasm, members);
+    if (part) parts.push(part);
+  }
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0];
+  const union = wasm.Manifold.union(parts);
+  parts.forEach((m) => m.delete());
+  return union;
+}
+
+function buildGroup(wasm: ManifoldToplevel, shapes: Shape[]): Manifold | null {
   const solidParts = shapes.filter((s) => !s.hole).map((s) => placedPrimitive(wasm, s));
   if (solidParts.length === 0) return null;
   const solid = wasm.Manifold.union(solidParts);

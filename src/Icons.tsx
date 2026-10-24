@@ -55,6 +55,26 @@ export function SunIcon() {
   );
 }
 
+export function UndoIcon() {
+  return (
+    <Svg>
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+    </Svg>
+  );
+}
+
+export function TrashIcon() {
+  return (
+    <Svg>
+      <path d="M4 7h16" />
+      <path d="M9.5 7V4.5h5V7" />
+      <path d="M6.5 7l1 13h9l1-13" />
+      <path d="M10 11v5M14 11v5" />
+    </Svg>
+  );
+}
+
 export function MoonIcon() {
   return (
     <Svg>
