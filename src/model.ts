@@ -3,7 +3,13 @@
 
 export type Vec3 = [number, number, number];
 
-export type ShapeType = 'box' | 'cylinder' | 'sphere';
+export type ShapeType = 'box' | 'cylinder' | 'sphere' | 'mesh';
+
+/** Triangle mesh in the shape's own frame, centred on the origin. Used by merged shapes. */
+export interface MeshGeometry {
+  positions: number[];
+  indices: number[];
+}
 
 export interface Layer {
   id: string;
@@ -26,8 +32,9 @@ export interface Shape {
   color: string;
   /** Holes are subtracted from the solids in the same visible layers. */
   hole: boolean;
-  /** Shapes that share a groupId are merged: their holes cut their solids. Unset means ungrouped. */
-  groupId?: string;
+  /** Merged shapes only: the geometry, and the size it was made at. Resizing scales it from baseSize. */
+  mesh?: MeshGeometry;
+  baseSize?: Vec3;
 }
 
 export interface Project {
@@ -44,12 +51,14 @@ const DEFAULT_SIZE: Record<ShapeType, Vec3> = {
   box: [20, 20, 20],
   cylinder: [20, 30, 20],
   sphere: [20, 20, 20],
+  mesh: [20, 20, 20],
 };
 
 const TYPE_LABEL: Record<ShapeType, string> = {
   box: 'Box',
   cylinder: 'Cylinder',
   sphere: 'Sphere',
+  mesh: 'Merged',
 };
 
 export function createId(): string {
@@ -122,6 +131,9 @@ export function parseProject(text: string): Project {
       throw new Error(`Shape "${shape.name}" has invalid transform values.`);
     }
     if (!(shape.type in DEFAULT_SIZE)) throw new Error(`Shape "${shape.name}" has an unknown type.`);
+    if (shape.type === 'mesh' && (!shape.mesh || !isVec3(shape.baseSize))) {
+      throw new Error(`Merged shape "${shape.name}" is missing its geometry.`);
+    }
   }
   return { layers, shapes: doc.shapes as Shape[] };
 }

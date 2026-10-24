@@ -7,7 +7,7 @@ import Module, { type Manifold, type ManifoldToplevel, type Mat4 } from 'manifol
 // its HTML fallback instead, and the engine never loads.
 import manifoldWasmUrl from 'manifold-3d/manifold.wasm?url';
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
-import type { Shape, Vec3 } from './model';
+import type { MeshGeometry, Shape, Vec3 } from './model';
 
 const DEG_TO_RAD = Math.PI / 180;
 const CYLINDER_SEGMENTS = 64;
@@ -52,6 +52,7 @@ export function shapePosition(shape: Shape): Vector3 {
  * shape's own (unrotated, unmoved) frame. Callers own the returned manifold.
  */
 export function localPrimitive(wasm: ManifoldToplevel, shape: Shape): Manifold {
+  if (shape.type === 'mesh') return mergedGeometry(wasm, shape);
   let base: Manifold;
   switch (shape.type) {
     case 'box':
@@ -71,6 +72,22 @@ export function localPrimitive(wasm: ManifoldToplevel, shape: Shape): Manifold {
   const sized = base.scale(shape.size);
   base.delete();
   return sized;
+}
+
+/** A merged shape's stored mesh, stretched from its original size to its current size. */
+function mergedGeometry(wasm: ManifoldToplevel, shape: Shape): Manifold {
+  const { mesh, baseSize } = shape;
+  if (!mesh || !baseSize) throw new Error(`Merged shape "${shape.name}" has no geometry.`);
+  const original = new wasm.Mesh({
+    numProp: 3,
+    vertProperties: Float32Array.from(mesh.positions),
+    triVerts: Uint32Array.from(mesh.indices),
+  });
+  const base = new wasm.Manifold(original);
+  const factor: Vec3 = [0, 1, 2].map((i) => (baseSize[i] > 0 ? shape.size[i] / baseSize[i] : 1)) as Vec3;
+  const scaled = base.scale(factor);
+  base.delete();
+  return scaled;
 }
 
 /** Matrix that places a local primitive into the scene. */
@@ -94,19 +111,12 @@ function placedPrimitive(wasm: ManifoldToplevel, shape: Shape): Manifold {
  * subtracted. Returns null when there is nothing solid to make.
  * The caller owns the returned manifold.
  */
+/**
+ * The printable union of every visible solid. Holes are left out: a hole only cuts
+ * the solids it is merged with (see mergeShapes).
+ */
 export function buildResult(wasm: ManifoldToplevel, shapes: Shape[]): Manifold | null {
-  // Each group is built on its own, so a hole only cuts the solids it is merged with.
-  // Ungrouped shapes each form a group of their own.
-  const groups = new Map<string, Shape[]>();
-  for (const shape of shapes) {
-    const key = shape.groupId ?? `solo:${shape.id}`;
-    groups.set(key, [...(groups.get(key) ?? []), shape]);
-  }
-  const parts: Manifold[] = [];
-  for (const members of groups.values()) {
-    const part = buildGroup(wasm, members);
-    if (part) parts.push(part);
-  }
+  const parts = shapes.filter((s) => !s.hole).map((s) => placedPrimitive(wasm, s));
   if (parts.length === 0) return null;
   if (parts.length === 1) return parts[0];
   const union = wasm.Manifold.union(parts);
@@ -114,21 +124,58 @@ export function buildResult(wasm: ManifoldToplevel, shapes: Shape[]): Manifold |
   return union;
 }
 
-function buildGroup(wasm: ManifoldToplevel, shapes: Shape[]): Manifold | null {
+export interface MergedGeometry {
+  geometry: MeshGeometry;
+  position: Vec3;
+  size: Vec3;
+}
+
+/**
+ * Bakes shapes into one mesh: solids are unioned, then holes are subtracted.
+ * The mesh is centred on its own bounding box, so the result can be moved and resized.
+ * Returns null when there is no solid to keep.
+ */
+export function mergeShapes(wasm: ManifoldToplevel, shapes: Shape[]): MergedGeometry | null {
   const solidParts = shapes.filter((s) => !s.hole).map((s) => placedPrimitive(wasm, s));
   if (solidParts.length === 0) return null;
   const solid = wasm.Manifold.union(solidParts);
   solidParts.forEach((m) => m.delete());
 
   const holeParts = shapes.filter((s) => s.hole).map((s) => placedPrimitive(wasm, s));
-  if (holeParts.length === 0) return solid;
-  const holes = wasm.Manifold.union(holeParts);
-  holeParts.forEach((m) => m.delete());
+  let result = solid;
+  if (holeParts.length > 0) {
+    const holes = wasm.Manifold.union(holeParts);
+    holeParts.forEach((m) => m.delete());
+    result = solid.subtract(holes);
+    solid.delete();
+    holes.delete();
+  }
 
-  const result = solid.subtract(holes);
-  solid.delete();
-  holes.delete();
-  return result;
+  const data = meshData(result);
+  result.delete();
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < data.positions.length; i += 3) {
+    for (let axis = 0; axis < 3; axis++) {
+      min[axis] = Math.min(min[axis], data.positions[i + axis]);
+      max[axis] = Math.max(max[axis], data.positions[i + axis]);
+    }
+  }
+  const position = min.map((v, i) => (v + max[i]) / 2) as Vec3;
+  const size = min.map((v, i) => round3(max[i] - v)) as Vec3;
+  const positions: number[] = [];
+  for (let i = 0; i < data.positions.length; i += 3) {
+    for (let axis = 0; axis < 3; axis++) positions.push(round3(data.positions[i + axis] - position[axis]));
+  }
+  return {
+    geometry: { positions, indices: Array.from(data.indices) },
+    position: position.map(round3) as Vec3,
+    size,
+  };
+}
+
+function round3(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 export function meshData(manifold: Manifold): MeshData {

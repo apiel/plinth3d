@@ -17,7 +17,7 @@ import {
   type ShapeType,
   type Vec3,
 } from './model';
-import { encodeBinarySTL, loadEngine, resizeAlongAxis, resultMesh } from './geometry';
+import { encodeBinarySTL, loadEngine, mergeShapes, resizeAlongAxis, resultMesh } from './geometry';
 
 const AUTOSAVE_KEY = 'plinth3d:autosave';
 const HISTORY_LIMIT = 100;
@@ -133,7 +133,7 @@ export default function App() {
   const selected = project.shapes.find((s) => s.id === selectedId) ?? null;
   const selectedShapes = project.shapes.filter((s) => selection.includes(s.id));
 
-  // Click a shape to select it, or all of its group. Shift adds or removes it.
+  // Click a shape to select it. Shift adds or removes it from the selection.
   const selectShape = (id: string | null, additive: boolean) => {
     if (id === null) {
       if (!additive) setSelection([]);
@@ -141,16 +141,9 @@ export default function App() {
     }
     const clicked = project.shapes.find((s) => s.id === id);
     if (!clicked) return;
-    const ids = project.shapes
-      .filter((s) => s.id === id || (clicked.groupId !== undefined && s.groupId === clicked.groupId))
-      .map((s) => s.id);
-    if (!additive) {
-      setSelection(ids);
-    } else if (ids.every((x) => selection.includes(x))) {
-      setSelection(selection.filter((x) => !ids.includes(x)));
-    } else {
-      setSelection([...selection.filter((x) => !ids.includes(x)), ...ids]);
-    }
+    if (!additive) setSelection([id]);
+    else if (selection.includes(id)) setSelection(selection.filter((x) => x !== id));
+    else setSelection([...selection, id]);
     setActiveLayerId(clicked.layerId);
   };
   const layerOf = (id: string) => project.layers.find((l) => l.id === id);
@@ -230,24 +223,15 @@ export default function App() {
 
   const selectionLocked = selectedShapes.some((s) => layerOf(s.layerId)?.locked);
 
-  // Clone the selection. Groups are cloned as groups.
+  // Clone the selection.
   const cloneSelected = () => {
     if (selectedShapes.length === 0 || selectionLocked) return;
-    const groupIds = new Map<string, string>();
-    const clones = selectedShapes.map((s): Shape => {
-      let groupId: string | undefined;
-      if (s.groupId) {
-        if (!groupIds.has(s.groupId)) groupIds.set(s.groupId, createId());
-        groupId = groupIds.get(s.groupId);
-      }
-      return {
-        ...s,
-        id: createId(),
-        name: `${s.name} copy`,
-        groupId,
-        position: [s.position[0] + 10, s.position[1], s.position[2] + 10] as Vec3,
-      };
-    });
+    const clones = selectedShapes.map((s): Shape => ({
+      ...s,
+      id: createId(),
+      name: `${s.name} copy`,
+      position: [s.position[0] + 10, s.position[1], s.position[2] + 10] as Vec3,
+    }));
     commit({ ...project, shapes: [...project.shapes, ...clones] });
     setSelection(clones.map((c) => c.id));
   };
@@ -259,27 +243,41 @@ export default function App() {
     setSelection([]);
   };
 
-  // Merge the selection into one group. Its holes cut its solids.
+  // Merge the selection into one object. Holes cut the solids, then the solids
+  // become a single mesh with one colour that moves and resizes like a primitive.
   const mergeSelected = () => {
     if (selectedShapes.length < 2) {
       setNotice('Select at least two shapes to merge them.');
       return;
     }
     if (selectionLocked) return;
-    const groupId = createId();
+    if (!engine) return;
+    const merged = mergeShapes(engine, selectedShapes);
+    if (!merged) {
+      setNotice('Nothing to merge: the selection needs at least one solid shape, not only holes.');
+      return;
+    }
+    const firstSolid = selectedShapes.find((s) => !s.hole) ?? selectedShapes[0];
+    const mergedCount = project.shapes.filter((s) => s.type === 'mesh').length + 1;
+    const shape: Shape = {
+      id: createId(),
+      name: `Merged ${mergedCount}`,
+      type: 'mesh',
+      layerId: selectedShapes[0].layerId,
+      position: merged.position,
+      rotation: [0, 0, 0],
+      size: merged.size,
+      baseSize: merged.size,
+      color: firstSolid.color,
+      hole: false,
+      mesh: merged.geometry,
+    };
     const ids = selectedShapes.map((s) => s.id);
-    commit({ ...project, shapes: project.shapes.map((s) => (ids.includes(s.id) ? { ...s, groupId } : s)) });
+    commit({ ...project, shapes: [...project.shapes.filter((s) => !ids.includes(s.id)), shape] });
+    setSelection([shape.id]);
+    setReadout(null);
   };
 
-  // Ungroup every group that the selection touches.
-  const ungroupSelected = () => {
-    const groupIds = new Set(selectedShapes.map((s) => s.groupId).filter((g): g is string => g !== undefined));
-    if (groupIds.size === 0 || selectionLocked) return;
-    commit({
-      ...project,
-      shapes: project.shapes.map((s) => (s.groupId && groupIds.has(s.groupId) ? { ...s, groupId: undefined } : s)),
-    });
-  };
 
   // Turn the selection into holes, or back into solids.
   const toggleHoleSelected = () => {
@@ -355,8 +353,7 @@ export default function App() {
         cloneSelected();
       } else if (mod && event.key.toLowerCase() === 'g') {
         event.preventDefault();
-        if (event.shiftKey) ungroupSelected();
-        else mergeSelected();
+        mergeSelected();
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         deleteSelected();
       } else if (event.key.toLowerCase() === 'w') {
@@ -484,18 +481,15 @@ export default function App() {
           </button>
         </div>
         <div className="group">
-          <button type="button" onClick={mergeSelected} disabled={selectedShapes.length < 2} title="Merge the selection into one group (Ctrl+G)">
+          <button type="button" onClick={mergeSelected} disabled={selectedShapes.length < 2} title="Merge the selection into one object (Ctrl+G)">
             Merge
-          </button>
-          <button type="button" onClick={ungroupSelected} disabled={!selectedShapes.some((s) => s.groupId)} title="Ungroup (Ctrl+Shift+G)">
-            Ungroup
           </button>
           <button
             type="button"
             className={selectedShapes.length > 0 && selectedShapes[selectedShapes.length - 1].hole ? 'toggled' : ''}
             onClick={toggleHoleSelected}
             disabled={selectedShapes.length === 0}
-            title="Hole: cuts the solids it is merged with"
+            title="Hole: cuts the solids when merged"
           >
             Hole
           </button>
