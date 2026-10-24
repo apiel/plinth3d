@@ -485,3 +485,12 @@ select {
   position: relative;
   z-index: 1;
 }
+
+/* The selected segment is filled, so it reads apart from the others at a glance. */
+.toolbar .segmented > button.toggled {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: none;
+}
+
