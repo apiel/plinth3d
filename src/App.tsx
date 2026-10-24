@@ -353,6 +353,10 @@ export default function App() {
       if (mod && key === 'z') {
         event.preventDefault();
         undo();
+      } else if (mod && key === 'a') {
+        event.preventDefault();
+        setSelection(visibleShapes(project).map((s) => s.id));
+        setReadout(null);
       } else if (mod && key === 'd') {
         event.preventDefault();
         cloneSelected();

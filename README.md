@@ -46,6 +46,7 @@ npm run build    # type-check and build to dist/
 | M / R | Move / rotate tool |
 | G | Merge the selection (Ctrl+G also works) |
 | H | Hole: toggle the selection as a hole |
+| Ctrl+A | Select all visible shapes |
 | Ctrl+D | Clone |
 | Ctrl+Z | Undo |
 | Del | Delete |
