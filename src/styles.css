@@ -458,3 +458,30 @@ select {
   color: var(--muted);
   pointer-events: none;
 }
+
+/* Buttons that belong together read as one segmented control. */
+.toolbar .segmented {
+  gap: 0;
+}
+
+.segmented > button {
+  border-radius: 0;
+  margin-left: -1px;
+  /* Segments touch: the shared border is drawn once, so the gap is closed. */
+  margin-right: 0;
+}
+
+.segmented > button:first-of-type {
+  border-radius: 6px 0 0 6px;
+  margin-left: 0;
+}
+
+.segmented > button:last-of-type {
+  border-radius: 0 6px 6px 0;
+}
+
+.segmented > button:hover:not(:disabled),
+.segmented > button.toggled {
+  position: relative;
+  z-index: 1;
+}

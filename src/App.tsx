@@ -424,7 +424,7 @@ export default function App() {
             <KeyHint k="S" />
           </button>
         </div>
-        <div className="group">
+        <div className="group segmented">
           <button
             type="button"
             className={gizmoMode === 'translate' ? 'toggled' : ''}
@@ -444,7 +444,7 @@ export default function App() {
             <KeyHint k="R" />
           </button>
         </div>
-        <div className="group" role="group" aria-label="Drag plane">
+        <div className="group segmented" role="group" aria-label="Drag plane">
           <span className="group-label">Drag in</span>
           {(['XY', 'XZ', 'YZ'] as const).map((plane) => (
             <button
