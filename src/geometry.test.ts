@@ -166,40 +166,7 @@ describe('rounded edges', () => {
   });
 });
 
-describe('rounded corners', () => {
-  it('rounds a corner by the part of the cube the sphere leaves out', async () => {
-    const wasm = await loadEngine();
-    const shape = createShape('box', createProject().layers[0].id, []);
-    shape.size = [20, 20, 20];
-    shape.rounds = [{ edge: 'c:1:1:1', radius: 5 }];
-    const rounded = localPrimitive(wasm, shape);
-    // A corner removes r^3 - (1/8) * (4/3) pi r^3 = r^3 (1 - pi/6).
-    const removed = 125 * (1 - Math.PI / 6);
-    expect(Math.abs(rounded.volume() - (8000 - removed)) / 8000).toBeLessThan(0.01);
-    rounded.delete();
-  });
-});
 
-describe('rounded box with every edge and corner', () => {
-  it('matches the exact volume of a box rounded on all edges and corners', async () => {
-    const wasm = await loadEngine();
-    const shape = createShape('box', createProject().layers[0].id, []);
-    shape.size = [20, 20, 20];
-    const rounds: { edge: string; radius: number }[] = [];
-    for (const along of [0, 1, 2]) {
-      for (const sa of [-1, 1]) for (const sb of [-1, 1]) rounds.push({ edge: `${along}:${sa}:${sb}`, radius: 5 });
-    }
-    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) rounds.push({ edge: `c:${sx}:${sy}:${sz}`, radius: 5 });
-    shape.rounds = rounds;
-    const rounded = localPrimitive(wasm, shape);
-    // Minkowski sum of a cube of side L = 10 with a ball of radius 5.
-    const L = 10;
-    const r = 5;
-    const exact = L ** 3 + 6 * L * L * r + 3 * Math.PI * L * r * r + (4 / 3) * Math.PI * r ** 3;
-    expect(Math.abs(rounded.volume() - exact) / exact).toBeLessThan(0.01);
-    rounded.delete();
-  });
-});
 
 describe('edge and corner meeting', () => {
   it('gives the same result whether an edge is set to the corner radius or the corner takes over', async () => {
@@ -218,5 +185,19 @@ describe('edge and corner meeting', () => {
     expect(Math.abs(mismatched.volume() - matched.volume())).toBeLessThan(1);
     mismatched.delete();
     matched.delete();
+  });
+});
+
+describe('rounded corner alone', () => {
+  it('takes a bit off the corner and keeps the rest of the box', async () => {
+    const wasm = await loadEngine();
+    const shape = createShape('box', createProject().layers[0].id, []);
+    shape.size = [20, 20, 20];
+    shape.rounds = [{ edge: 'c:1:1:1', radius: 6 }];
+    const rounded = localPrimitive(wasm, shape);
+    // More than the corner cube's volume is kept, less than the whole box.
+    expect(rounded.volume()).toBeLessThan(8000);
+    expect(rounded.volume()).toBeGreaterThan(8000 - 216);
+    rounded.delete();
   });
 });

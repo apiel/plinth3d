@@ -401,9 +401,17 @@ function roundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
   for (const { edge, radius } of rounds) {
     let cutter: Manifold;
     if (isCorner(edge)) {
+      // Each face keeps a quarter-round of radius r at the corner, and the corner itself is a
+      // sphere patch of radius sqrt(2) r centred on the inner corner. Edges stay sharp.
       const signs = cornerSigns(edge);
       const r = cornerRadius(signs) ?? 0.1;
-      cutter = boxAt(wasm, [r + 1, r + 1, r + 1], signs.map((sg, i) => sg * (half[i] - r / 2 + 0.5)) as Vec3);
+      const cell = boxAt(wasm, [r + 1, r + 1, r + 1], signs.map((sg, i) => sg * (half[i] - r / 2 + 0.5)) as Vec3);
+      const ball = wasm.Manifold.sphere(Math.SQRT2 * r, 48);
+      const placed = ball.translate(...(signs.map((sg, i) => sg * (half[i] - r)) as Vec3));
+      ball.delete();
+      cutter = cell.subtract(placed);
+      cell.delete();
+      placed.delete();
     } else {
       const [along, sa, sb] = edgeParts(edge);
       const [a, b] = others(along);
@@ -422,34 +430,23 @@ function roundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
     body = next;
   }
 
-  // Phase 2: put each rounded surface back.
+  // Phase 2: put each rounded edge's surface back. Corners were shaped in phase 1.
   const pieces: Manifold[] = [];
   for (const { edge, radius } of rounds) {
-    if (isCorner(edge)) {
-      const signs = cornerSigns(edge);
-      const r = cornerRadius(signs) ?? 0.1;
-      const ball = wasm.Manifold.sphere(r, 32);
-      const placed = ball.translate(...(signs.map((sg, i) => sg * (half[i] - r)) as Vec3));
-      ball.delete();
-      const cell = boxAt(wasm, [r, r, r], signs.map((sg, i) => sg * (half[i] - r / 2)) as Vec3);
-      pieces.push(placed.intersect(cell));
-      placed.delete();
-      cell.delete();
-    } else {
-      const [along, sa, sb] = edgeParts(edge);
-      const [a, b] = others(along);
-      const r = edgeRadius(radius, along, sa, sb, a, b);
-      const pos = edgeEnd(along, a, sa, b, sb, 1, false);
-      const neg = edgeEnd(along, a, sa, b, sb, -1, false);
-      const cylinder = cylinderAlong(
-        wasm,
-        along,
-        pos - neg,
-        r,
-        centreOf(along, (pos + neg) / 2, a, sa * (half[a] - r), b, sb * (half[b] - r)),
-      );
-      pieces.push(cylinder);
-    }
+    if (isCorner(edge)) continue;
+    const [along, sa, sb] = edgeParts(edge);
+    const [a, b] = others(along);
+    const r = edgeRadius(radius, along, sa, sb, a, b);
+    const pos = edgeEnd(along, a, sa, b, sb, 1, false);
+    const neg = edgeEnd(along, a, sa, b, sb, -1, false);
+    const cylinder = cylinderAlong(
+      wasm,
+      along,
+      pos - neg,
+      r,
+      centreOf(along, (pos + neg) / 2, a, sa * (half[a] - r), b, sb * (half[b] - r)),
+    );
+    pieces.push(cylinder);
   }
 
   if (pieces.length === 0) return body;

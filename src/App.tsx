@@ -258,12 +258,7 @@ export default function App() {
   const setRound = (shapeId: string, key: string, radius: number) => {
     const shape = project.shapes.find((s) => s.id === shapeId);
     if (!shape) return;
-    // A rounded corner needs its three edges rounded to the same radius, or its faces do not meet cleanly.
     const keys = [key];
-    if (key.startsWith('c:') && radius > 0) {
-      const [sx, sy, sz] = key.slice(2).split(':').map(Number);
-      keys.push(`0:${sy}:${sz}`, `1:${sx}:${sz}`, `2:${sx}:${sy}`);
-    }
     const others = (shape.rounds ?? []).filter((r) => !keys.includes(r.edge));
     updateShape(shapeId, {
       rounds: radius > 0 ? [...others, ...keys.map((edge) => ({ edge, radius }))] : others,
