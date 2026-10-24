@@ -53,6 +53,7 @@ export function shapePosition(shape: Shape): Vector3 {
  */
 export function localPrimitive(wasm: ManifoldToplevel, shape: Shape): Manifold {
   if (shape.type === 'mesh') return mergedGeometry(wasm, shape);
+  if (shape.type === 'box' && shape.rounds?.length) return roundedBox(wasm, shape);
   let base: Manifold;
   switch (shape.type) {
     case 'box':
@@ -343,4 +344,152 @@ function mapShape(shape: Shape, frame: Frame): Shape {
     sourcePosition: shape.sourcePosition ? mapPoint(shape.sourcePosition, frame) : undefined,
     sources: shape.sources?.map((child) => mapShape(child, frame)),
   };
+}
+
+/**
+ * A box with some edges and corners rounded. An edge runs to the box's end when the corner there is
+ * square, and stops where the corner's round begins when that corner is rounded. Two phases, so no
+ * rounding undoes another: first every rounded feature is cut out of the box; then each feature's
+ * rounded surface is put back. Sizes are in mm; the box is centred on the origin.
+ */
+function roundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
+  const size = shape.size;
+  const half = size.map((v) => v / 2) as Vec3;
+  const rounds = shape.rounds ?? [];
+  const isCorner = (key: string) => key.startsWith('c:');
+  const cornerSigns = (key: string) => key.slice(2).split(':').map(Number) as Vec3;
+  const edgeParts = (key: string) => key.split(':').map(Number) as [number, number, number];
+  const others = (along: number): [number, number] => {
+    const [a, b] = [0, 1, 2].filter((axis) => axis !== along);
+    return [a, b];
+  };
+  const cornerRadius = (signs: Vec3): number | null => {
+    const key = `c:${signs.join(':')}`;
+    const found = rounds.find((r) => r.edge === key);
+    return found ? Math.min(Math.max(found.radius, 0.1), Math.min(...size) / 2) : null;
+  };
+  const edgeRadiusRaw = (radius: number, a: number, b: number) =>
+    Math.min(Math.max(radius, 0.1), Math.min(size[a], size[b]) / 2);
+  // An edge that meets a rounded corner takes that corner's radius, so the two surfaces meet
+  // exactly (a different radius leaves a step at the corner).
+  const edgeRadius = (radius: number, along: number, sa: number, sb: number, a: number, b: number) => {
+    const ends = [-1, 1].map((end) => {
+      const signs = [0, 0, 0] as Vec3;
+      signs[along] = end;
+      signs[a] = sa;
+      signs[b] = sb;
+      return cornerRadius(signs);
+    });
+    const cornered = ends.filter((r): r is number => r !== null);
+    return cornered.length > 0 ? Math.max(...cornered) : edgeRadiusRaw(radius, a, b);
+  };
+
+  // Where an edge stops at one end: at the box face if the corner is square (it reaches out a
+  // little, so the cut is clean), or where the corner's round begins.
+  const edgeEnd = (along: number, a: number, sa: number, b: number, sb: number, end: number, cut: boolean) => {
+    const signs = [0, 0, 0] as Vec3;
+    signs[along] = end;
+    signs[a] = sa;
+    signs[b] = sb;
+    const rc = cornerRadius(signs);
+    if (rc === null) return end * (cut ? half[along] + 1 : half[along]);
+    return end * (half[along] - rc);
+  };
+
+  // Phase 1: cut every rounded feature out of the box.
+  let body = wasm.Manifold.cube(size, true);
+  for (const { edge, radius } of rounds) {
+    let cutter: Manifold;
+    if (isCorner(edge)) {
+      const signs = cornerSigns(edge);
+      const r = cornerRadius(signs) ?? 0.1;
+      cutter = boxAt(wasm, [r + 1, r + 1, r + 1], signs.map((sg, i) => sg * (half[i] - r / 2 + 0.5)) as Vec3);
+    } else {
+      const [along, sa, sb] = edgeParts(edge);
+      const [a, b] = others(along);
+      const r = edgeRadius(radius, along, sa, sb, a, b);
+      const pos = edgeEnd(along, a, sa, b, sb, 1, true);
+      const neg = edgeEnd(along, a, sa, b, sb, -1, true);
+      cutter = boxAt(
+        wasm,
+        dimsOf(along, pos - neg, a, r + 1, b, r + 1),
+        centreOf(along, (pos + neg) / 2, a, sa * (half[a] - r / 2 + 0.5), b, sb * (half[b] - r / 2 + 0.5)),
+      );
+    }
+    const next = body.subtract(cutter);
+    body.delete();
+    cutter.delete();
+    body = next;
+  }
+
+  // Phase 2: put each rounded surface back.
+  const pieces: Manifold[] = [];
+  for (const { edge, radius } of rounds) {
+    if (isCorner(edge)) {
+      const signs = cornerSigns(edge);
+      const r = cornerRadius(signs) ?? 0.1;
+      const ball = wasm.Manifold.sphere(r, 32);
+      const placed = ball.translate(...(signs.map((sg, i) => sg * (half[i] - r)) as Vec3));
+      ball.delete();
+      const cell = boxAt(wasm, [r, r, r], signs.map((sg, i) => sg * (half[i] - r / 2)) as Vec3);
+      pieces.push(placed.intersect(cell));
+      placed.delete();
+      cell.delete();
+    } else {
+      const [along, sa, sb] = edgeParts(edge);
+      const [a, b] = others(along);
+      const r = edgeRadius(radius, along, sa, sb, a, b);
+      const pos = edgeEnd(along, a, sa, b, sb, 1, false);
+      const neg = edgeEnd(along, a, sa, b, sb, -1, false);
+      const cylinder = cylinderAlong(
+        wasm,
+        along,
+        pos - neg,
+        r,
+        centreOf(along, (pos + neg) / 2, a, sa * (half[a] - r), b, sb * (half[b] - r)),
+      );
+      pieces.push(cylinder);
+    }
+  }
+
+  if (pieces.length === 0) return body;
+  const all = [body, ...pieces];
+  const result = wasm.Manifold.union(all);
+  all.forEach((m) => m.delete());
+  return result;
+}
+
+function dimsOf(along: number, length: number, a: number, extentA: number, b: number, extentB: number): Vec3 {
+  const dims: Vec3 = [0, 0, 0];
+  dims[along] = length;
+  dims[a] = extentA;
+  dims[b] = extentB;
+  return dims;
+}
+
+function centreOf(along: number, valueAlong: number, a: number, valueA: number, b: number, valueB: number): Vec3 {
+  const centre: Vec3 = [0, 0, 0];
+  centre[along] = valueAlong;
+  centre[a] = valueA;
+  centre[b] = valueB;
+  return centre;
+}
+
+function boxAt(wasm: ManifoldToplevel, dims: Vec3, centre: Vec3): Manifold {
+  const box = wasm.Manifold.cube(dims, true);
+  const placed = box.translate(centre[0], centre[1], centre[2]);
+  box.delete();
+  return placed;
+}
+
+/** A cylinder whose axis runs along the given axis (0 = X, 1 = Y, 2 = Z), centred at `centre`. */
+function cylinderAlong(wasm: ManifoldToplevel, along: number, length: number, radius: number, centre: Vec3): Manifold {
+  const lying = wasm.Manifold.cylinder(length, radius, radius, 32, true);
+  let turned = lying;
+  if (along === 0) turned = lying.transform(toMat4(new Matrix4().makeRotationY(Math.PI / 2)));
+  if (along === 1) turned = lying.transform(toMat4(new Matrix4().makeRotationX(Math.PI / 2)));
+  if (turned !== lying) lying.delete();
+  const placed = turned.translate(centre[0], centre[1], centre[2]);
+  turned.delete();
+  return placed;
 }

@@ -30,6 +30,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { ManifoldToplevel } from 'manifold-3d';
 import type { Layer, Shape, Vec3 } from './model';
@@ -48,6 +49,11 @@ const HANDLE_HOVER_COLOR = '#9cc2ff';
 const HANDLE_ACTIVE_COLOR = '#2f6bff';
 /** Length of the resize arrow as a fraction of the camera distance. */
 const ARROW_SCREEN_SCALE = 0.12;
+/** Width of the rounding highlight as a fraction of the camera distance. */
+const ROUND_SCREEN_SCALE = 0.005;
+/** How close the pointer must be, in pixels, to pick an edge or a corner. */
+const EDGE_PICK_PX = 8;
+const CORNER_PICK_PX = 11;
 /** Orange stands out on the blue shapes. */
 const ARROW_COLOR = 0xff8a00;
 const DRAG_THRESHOLD = 3;
@@ -99,9 +105,14 @@ interface ViewportProps {
   onReadoutShow: (target: ReadoutTarget) => void;
   /** Shift + drag on empty space selects the shapes inside the rectangle. */
   onMarquee: (ids: string[]) => void;
+  /** A click on a highlighted edge or corner of an unselected box. */
+  onRoundClick: (shapeId: string, key: string, x: number, y: number) => void;
   /** Called on every step of a drag. Does not add undo steps. */
   onShapeLive: (id: string, patch: Partial<Shape>) => void;
 }
+
+/** An edge or corner of an unselected box, under the pointer. */
+type RoundHover = { shapeId: string; key: string; a: Vector3; b: Vector3; corner: boolean };
 
 /** The drag in progress, if any. */
 type Drag = {
@@ -264,6 +275,93 @@ export function Viewport(props: ViewportProps) {
 
     const scratch = new Vector3();
 
+    // Rounding: an edge or corner of an unselected box is highlighted under the pointer.
+    // A click on it opens the rounding modal instead of selecting the box.
+    const roundHighlight = new Mesh(
+      new BoxGeometry(1, 1, 1),
+      new MeshBasicMaterial({ color: '#ff8a00', depthTest: false, transparent: true, opacity: 0.95 }),
+    );
+    roundHighlight.visible = false;
+    roundHighlight.renderOrder = 30;
+    scene.add(roundHighlight);
+    let roundHover: RoundHover | null = null;
+    let roundPress: { shapeId: string; key: string } | null = null;
+
+    const updateRoundHighlight = () => {
+      const h = roundHover;
+      if (!h || handlersRef.current.selection.includes(h.shapeId)) {
+        roundHighlight.visible = false;
+        return;
+      }
+      const mid = h.a.clone().add(h.b).multiplyScalar(0.5);
+      const width = mid.distanceTo(camera.position) * ROUND_SCREEN_SCALE;
+      roundHighlight.position.copy(mid);
+      if (h.corner) {
+        roundHighlight.quaternion.identity();
+        roundHighlight.scale.setScalar(width * 1.5);
+      } else {
+        const dir = h.b.clone().sub(h.a);
+        roundHighlight.quaternion.setFromUnitVectors(new Vector3(1, 0, 0), dir.clone().normalize());
+        roundHighlight.scale.set(dir.length(), width, width);
+      }
+      roundHighlight.visible = true;
+    };
+
+    // The corner or edge of an unselected box nearest the pointer, if any. Corners win.
+    const findRoundTarget = (event: PointerEvent): RoundHover | null => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const toPage = (world: Vector3) => {
+        const p = world.clone().project(camera);
+        return new Vector2(rect.left + ((p.x + 1) / 2) * rect.width, rect.top + ((1 - p.y) / 2) * rect.height);
+      };
+      const pointer = new Vector2(event.clientX, event.clientY);
+      let cornerHit: RoundHover | null = null;
+      let cornerDistance = CORNER_PICK_PX;
+      let edgeHit: RoundHover | null = null;
+      let edgeDistance = EDGE_PICK_PX;
+      for (const group of objects.children) {
+        if (!(group instanceof Group) || !group.userData.shapeId) continue;
+        const id = group.userData.shapeId as string;
+        const shape = handlersRef.current.shapes.find((s) => s.id === id);
+        // Only unselected boxes can be rounded.
+        if (!shape || shape.type !== 'box' || handlersRef.current.selection.includes(id)) continue;
+        const half = shape.size.map((v) => v / 2);
+        group.updateMatrixWorld(true);
+        const corners: { sign: number[]; world: Vector3; px: Vector2 }[] = [];
+        for (const sx of [-1, 1]) {
+          for (const sy of [-1, 1]) {
+            for (const sz of [-1, 1]) {
+              const world = group.localToWorld(new Vector3(sx * half[0], sy * half[1], sz * half[2]));
+              corners.push({ sign: [sx, sy, sz], world, px: toPage(world) });
+            }
+          }
+        }
+        for (const c of corners) {
+          const d = pointer.distanceTo(c.px);
+          if (d < cornerDistance) {
+            cornerDistance = d;
+            cornerHit = { shapeId: id, key: `c:${c.sign.join(':')}`, a: c.world, b: c.world, corner: true };
+          }
+        }
+        for (const c of corners) {
+          for (const o of corners) {
+            const differing = [0, 1, 2].filter((i) => c.sign[i] !== o.sign[i]);
+            if (differing.length !== 1) continue;
+            const along = differing[0];
+            // Each edge is seen from both ends; keep the end on the negative side only.
+            if (c.sign[along] !== -1) continue;
+            const [a, b] = [0, 1, 2].filter((i) => i !== along);
+            const d = distanceToSegment(pointer, c.px, o.px);
+            if (d < edgeDistance) {
+              edgeDistance = d;
+              edgeHit = { shapeId: id, key: `${along}:${c.sign[a]}:${c.sign[b]}`, a: c.world, b: o.world, corner: false };
+            }
+          }
+        }
+      }
+      return cornerHit ?? edgeHit;
+    };
+
     // Which of the two faces each edge drags, switched by clicking the edge.
     const edgeChoice = new Map<string, number>();
     // The edge under the pointer. Its active face gets the resize arrow.
@@ -327,6 +425,7 @@ export function Viewport(props: ViewportProps) {
 
     renderer.setAnimationLoop(() => {
       orbit.update();
+      updateRoundHighlight();
       // Keep the edge grabs a constant width on screen, however far the camera is.
       for (const edge of sceneRef.current?.handles ?? []) {
         const width = edge.getWorldPosition(scratch).distanceTo(camera.position) * EDGE_SCREEN_SCALE;
@@ -452,6 +551,12 @@ export function Viewport(props: ViewportProps) {
       pressedShape = null;
       aim(event);
 
+      // A highlighted edge or corner: a click opens the rounding modal, nothing is selected.
+      if (roundHover) {
+        roundPress = { shapeId: roundHover.shapeId, key: roundHover.key };
+        return;
+      }
+
       // Face handles win over the move arrows, which can sit on the same spot.
       const handle = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false)[0];
       if (handle) {
@@ -531,8 +636,9 @@ export function Viewport(props: ViewportProps) {
         return;
       }
       if (!drag) {
-        // Hover highlight on the face handles.
+        // Hover highlight on the face handles, and on rounding targets.
         aim(event);
+        roundHover = findRoundTarget(event);
         const hovered = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false)[0];
         const key = (hovered?.object.userData.key as string | undefined) ?? null;
         hintEdge = hovered
@@ -584,6 +690,14 @@ export function Viewport(props: ViewportProps) {
         finishMarquee(event);
         return;
       }
+      if (roundPress) {
+        const press = roundPress;
+        roundPress = null;
+        const moved = pressAt ? Math.hypot(event.clientX - pressAt.x, event.clientY - pressAt.y) : Infinity;
+        pressAt = null;
+        if (moved <= DRAG_THRESHOLD) handlersRef.current.onRoundClick(press.shapeId, press.key, event.clientX, event.clientY);
+        return;
+      }
       if (drag) {
         // A click on an edge (no drag) switches it to its other axis and shows that value.
         if (drag.kind === 'resize' && !drag.moved) {
@@ -615,6 +729,7 @@ export function Viewport(props: ViewportProps) {
     renderer.domElement.addEventListener('pointerup', onUp);
     renderer.domElement.addEventListener('pointerleave', () => {
       if (!drag) hintEdge = null;
+      roundHover = null;
     });
     // A middle press would otherwise start browser auto-scroll.
     const onAuxDown = (event: MouseEvent) => {
@@ -890,6 +1005,13 @@ function paintHandles(view: { handles: Mesh[]; activeHandle: string | null; hove
   }
 }
 
+/** Distance in pixels from a point to a line segment. */
+function distanceToSegment(p: Vector2, a: Vector2, b: Vector2): number {
+  const ab = b.clone().sub(a);
+  const t = Math.max(0, Math.min(1, p.clone().sub(a).dot(ab) / Math.max(ab.lengthSq(), 1e-9)));
+  return p.distanceTo(a.clone().addScaledVector(ab, t));
+}
+
 function round(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -898,8 +1020,8 @@ function toGeometry(data: MeshData): BufferGeometry {
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(data.positions, 3));
   geometry.setIndex(new BufferAttribute(data.indices, 1));
-  geometry.computeVertexNormals();
-  return geometry;
+  // Smooth where the surface curves (rounded edges, cylinders), sharp across real edges.
+  return toCreasedNormals(geometry, Math.PI / 6);
 }
 
 function solidMaterial(color: string): MeshStandardMaterial {

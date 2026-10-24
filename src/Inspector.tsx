@@ -14,7 +14,15 @@ interface InspectorProps {
 const AXES = ['x', 'y', 'z'] as const;
 
 /** Edits the selected shape. Numbers are millimetres and degrees. */
-export function Inspector({ shape, count, layers, readOnly, onChange, onDuplicate, onDelete }: InspectorProps) {
+export function Inspector({
+  shape,
+  count,
+  layers,
+  readOnly,
+  onChange,
+  onDuplicate,
+  onDelete,
+}: InspectorProps) {
   if (!shape && count > 1) {
     return (
       <section className="panel">

@@ -141,3 +141,82 @@ describe('primitives', () => {
     torus.delete();
   });
 });
+
+describe('rounded edges', () => {
+  it('rounds one edge of a box by the quarter-round it removes', async () => {
+    const wasm = await loadEngine();
+    const shape = createShape('box', createProject().layers[0].id, []);
+    shape.size = [20, 20, 20];
+    // The edge along Z (axis 2) at +X, +Y, with radius 5.
+    shape.rounds = [{ edge: '2:1:1', radius: 5 }];
+    const rounded = localPrimitive(wasm, shape);
+    // Each rounded edge removes r^2 - pi r^2 / 4 from the square section, along its 20 mm length.
+    const removed = (25 - (Math.PI * 25) / 4) * 20;
+    expect(Math.abs(rounded.volume() - (8000 - removed)) / 8000).toBeLessThan(0.01);
+    rounded.delete();
+  });
+
+  it('leaves a box alone when no edge is rounded', async () => {
+    const wasm = await loadEngine();
+    const shape = createShape('box', createProject().layers[0].id, []);
+    shape.size = [20, 20, 20];
+    const box = localPrimitive(wasm, shape);
+    expect(box.volume()).toBeCloseTo(8000, 2);
+    box.delete();
+  });
+});
+
+describe('rounded corners', () => {
+  it('rounds a corner by the part of the cube the sphere leaves out', async () => {
+    const wasm = await loadEngine();
+    const shape = createShape('box', createProject().layers[0].id, []);
+    shape.size = [20, 20, 20];
+    shape.rounds = [{ edge: 'c:1:1:1', radius: 5 }];
+    const rounded = localPrimitive(wasm, shape);
+    // A corner removes r^3 - (1/8) * (4/3) pi r^3 = r^3 (1 - pi/6).
+    const removed = 125 * (1 - Math.PI / 6);
+    expect(Math.abs(rounded.volume() - (8000 - removed)) / 8000).toBeLessThan(0.01);
+    rounded.delete();
+  });
+});
+
+describe('rounded box with every edge and corner', () => {
+  it('matches the exact volume of a box rounded on all edges and corners', async () => {
+    const wasm = await loadEngine();
+    const shape = createShape('box', createProject().layers[0].id, []);
+    shape.size = [20, 20, 20];
+    const rounds: { edge: string; radius: number }[] = [];
+    for (const along of [0, 1, 2]) {
+      for (const sa of [-1, 1]) for (const sb of [-1, 1]) rounds.push({ edge: `${along}:${sa}:${sb}`, radius: 5 });
+    }
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) rounds.push({ edge: `c:${sx}:${sy}:${sz}`, radius: 5 });
+    shape.rounds = rounds;
+    const rounded = localPrimitive(wasm, shape);
+    // Minkowski sum of a cube of side L = 10 with a ball of radius 5.
+    const L = 10;
+    const r = 5;
+    const exact = L ** 3 + 6 * L * L * r + 3 * Math.PI * L * r * r + (4 / 3) * Math.PI * r ** 3;
+    expect(Math.abs(rounded.volume() - exact) / exact).toBeLessThan(0.01);
+    rounded.delete();
+  });
+});
+
+describe('edge and corner meeting', () => {
+  it('gives the same result whether an edge is set to the corner radius or the corner takes over', async () => {
+    const wasm = await loadEngine();
+    const make = (edgeRadius: number) => {
+      const shape = createShape('box', createProject().layers[0].id, []);
+      shape.size = [20, 20, 20];
+      shape.rounds = [
+        { edge: '2:1:1', radius: edgeRadius },
+        { edge: 'c:1:1:1', radius: 6 },
+      ];
+      return localPrimitive(wasm, shape);
+    };
+    const mismatched = make(4);
+    const matched = make(6);
+    expect(Math.abs(mismatched.volume() - matched.volume())).toBeLessThan(1);
+    mismatched.delete();
+    matched.delete();
+  });
+});

@@ -40,6 +40,8 @@ export interface Shape {
   /** Merged shapes only: the shapes they were made from, and the point they were made around. */
   sources?: Shape[];
   sourcePosition?: Vec3;
+  /** Boxes only: rounded edges. `edge` is the edge key used in the viewport, e.g. "2:1:-1". */
+  rounds?: { edge: string; radius: number }[];
 }
 
 export interface Project {

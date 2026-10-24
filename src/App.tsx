@@ -43,6 +43,7 @@ import {
   type Vec3,
 } from './model';
 import { addLayerFromFile, parseLayer, serializeLayer } from './model';
+import { RoundModal } from './RoundModal';
 import { encodeBinarySTL, loadEngine, mergeShapes, restoreSources, resizeAlongAxis, resultMesh } from './geometry';
 
 const AUTOSAVE_KEY = 'plinth3d:autosave';
@@ -108,6 +109,8 @@ export default function App() {
   const [showResult, setShowResult] = useState(false);
   const [engine, setEngine] = useState<ManifoldToplevel | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // An edge or corner clicked on an unselected box. Opens the rounding modal.
+  const [roundTarget, setRoundTarget] = useState<{ shapeId: string; key: string; x: number; y: number } | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [dragPlane, setDragPlane] = useState<DragPlane>('XZ');
   // Snap step for moving and resizing, in mm. 0 turns snapping off.
@@ -245,6 +248,26 @@ export default function App() {
       ...current,
       shapes: current.shapes.map((s) => (s.id === id ? { ...s, ...patch } : s)),
     }));
+  };
+
+  const openRound = (shapeId: string, key: string, x: number, y: number) => {
+    setRoundTarget({ shapeId, key, x, y });
+  };
+
+  // Sets the radius of one rounded edge or corner. Zero makes it square again.
+  const setRound = (shapeId: string, key: string, radius: number) => {
+    const shape = project.shapes.find((s) => s.id === shapeId);
+    if (!shape) return;
+    // A rounded corner needs its three edges rounded to the same radius, or its faces do not meet cleanly.
+    const keys = [key];
+    if (key.startsWith('c:') && radius > 0) {
+      const [sx, sy, sz] = key.slice(2).split(':').map(Number);
+      keys.push(`0:${sy}:${sz}`, `1:${sx}:${sz}`, `2:${sx}:${sy}`);
+    }
+    const others = (shape.rounds ?? []).filter((r) => !keys.includes(r.edge));
+    updateShape(shapeId, {
+      rounds: radius > 0 ? [...others, ...keys.map((edge) => ({ edge, radius }))] : others,
+    });
   };
 
   const toggleTheme = () => setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
@@ -454,6 +477,7 @@ export default function App() {
       } else if (event.key === 'Escape') {
         setSelection([]);
         setReadout(null);
+        setRoundTarget(null);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -607,7 +631,10 @@ export default function App() {
         >
           {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
         </button>
-        <div className="group">
+      </header>
+
+      <aside className="sidebar">
+        <div className="group project-actions">
           <button type="button" onClick={() => openInput.current?.click()}>Open</button>
           <button type="button" onClick={saveProject}>Save</button>
           <button type="button" className="primary" onClick={exportStl} disabled={!engine}>
@@ -625,9 +652,6 @@ export default function App() {
             }}
           />
         </div>
-      </header>
-
-      <aside className="sidebar">
         <LayerPanel
           layers={project.layers}
           shapes={project.shapes}
@@ -670,6 +694,7 @@ export default function App() {
           onReadoutShow={setReadout}
           snap={snap}
           readout={readout}
+          onRoundClick={openRound}
           onMarquee={(ids) => setSelection([...selection.filter((x) => !ids.includes(x)), ...ids])}
           onShapeLive={shapeLive}
         />
@@ -678,6 +703,21 @@ export default function App() {
           {notice && <span className="notice">{notice}</span>}
         </footer>
       </main>
+
+      {roundTarget && (() => {
+        const shape = project.shapes.find((s) => s.id === roundTarget.shapeId);
+        if (!shape) return null;
+        return (
+          <RoundModal
+            shape={shape}
+            roundKey={roundTarget.key}
+            x={roundTarget.x}
+            y={roundTarget.y}
+            onApply={(radius) => setRound(shape.id, roundTarget.key, radius)}
+            onClose={() => setRoundTarget(null)}
+          />
+        );
+      })()}
 
       <aside className="inspector">
         <Inspector

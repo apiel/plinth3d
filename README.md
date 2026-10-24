@@ -30,6 +30,8 @@ Shapes are combined with holes, and the result is exported as an STL file for yo
 - Export STL (binary, millimetres, Z-up for slicers).
 - Save and open projects as `.json` files. The project also autosaves in your browser.
 
+- Round edges and corners of a box: with the box not selected, hover an edge or corner. It lights up; click it and set the radius in the small window that opens; the shape updates as you type. Zero makes it square again.
+
 ## Getting started
 
 Requires Node.js 20 or newer.
