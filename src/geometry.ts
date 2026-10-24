@@ -68,10 +68,52 @@ export function localPrimitive(wasm: ManifoldToplevel, shape: Shape): Manifold {
     case 'sphere':
       base = wasm.Manifold.sphere(0.5, SPHERE_SEGMENTS);
       break;
+    case 'cone':
+      base = uprightCylinder(wasm, 0.5, 0, CYLINDER_SEGMENTS);
+      break;
+    case 'pyramid':
+      // Four segments turned by 45 degrees give a square base whose sides are 1 wide.
+      base = uprightCylinder(wasm, Math.SQRT1_2, 0, 4, 45);
+      break;
+    case 'wedge': {
+      // A right triangle in X and Y, extruded along Z.
+      const triangle = wasm.CrossSection.ofPolygons([[[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5]]]);
+      base = wasm.Manifold.extrude(triangle, 1, undefined, undefined, undefined, true);
+      triangle.delete();
+      break;
+    }
+    case 'torus': {
+      // A ring around the Y axis. It is flattened to fill the unit box, so its height matches its size.
+      // Revolving puts the ring's axis on Z, so it is turned to stand along Y first.
+      const section = wasm.CrossSection.circle(0.2, 32).translate(0.3, 0);
+      const ring = wasm.Manifold.revolve(section, CYLINDER_SEGMENTS);
+      section.delete();
+      const upright = ring.transform(toMat4(new Matrix4().makeRotationX(-Math.PI / 2)));
+      ring.delete();
+      base = upright.scale([1, 2.5, 1]);
+      upright.delete();
+      break;
+    }
   }
   const sized = base.scale(shape.size);
   base.delete();
   return sized;
+}
+
+/** A cylinder or cone standing along Y, with the given radii, centred on the origin. */
+function uprightCylinder(
+  wasm: ManifoldToplevel,
+  radiusLow: number,
+  radiusHigh: number,
+  segments: number,
+  turnDegrees = 0,
+): Manifold {
+  const lying = wasm.Manifold.cylinder(1, radiusLow, radiusHigh, segments, true);
+  const turned = turnDegrees === 0 ? lying : lying.rotate([0, 0, turnDegrees]);
+  if (turned !== lying) lying.delete();
+  const upright = turned.transform(toMat4(new Matrix4().makeRotationX(-Math.PI / 2)));
+  turned.delete();
+  return upright;
 }
 
 /** A merged shape's stored mesh, stretched from its original size to its current size. */

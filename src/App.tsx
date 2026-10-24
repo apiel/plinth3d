@@ -1,7 +1,32 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ManifoldToplevel } from 'manifold-3d';
 import { Viewport, type DragPlane, type GizmoMode, type ReadoutTarget, type Theme } from './Viewport';
-import { BoxIcon, CylinderIcon, KeyHint, Label, MoonIcon, SphereIcon, SunIcon, TrashIcon, UndoIcon } from './Icons';
+import {
+  BoxIcon,
+  ConeIcon,
+  CylinderIcon,
+  KeyHint,
+  Label,
+  MoonIcon,
+  PyramidIcon,
+  SphereIcon,
+  SunIcon,
+  TorusIcon,
+  TrashIcon,
+  UndoIcon,
+  WedgeIcon,
+} from './Icons';
+
+/** The primitives in the toolbar, in order. The key adds one with the keyboard. */
+const PRIMITIVES: { type: ShapeType; label: string; key: string; Icon: () => JSX.Element }[] = [
+  { type: 'box', label: 'Box', key: 'B', Icon: BoxIcon },
+  { type: 'cylinder', label: 'Cylinder', key: 'C', Icon: CylinderIcon },
+  { type: 'sphere', label: 'Sphere', key: 'S', Icon: SphereIcon },
+  { type: 'cone', label: 'Cone', key: 'K', Icon: ConeIcon },
+  { type: 'pyramid', label: 'Pyramid', key: 'P', Icon: PyramidIcon },
+  { type: 'wedge', label: 'Wedge', key: 'D', Icon: WedgeIcon },
+  { type: 'torus', label: 'Torus', key: 'T', Icon: TorusIcon },
+];
 import { LayerPanel } from './LayerPanel';
 import { Inspector } from './Inspector';
 import {
@@ -418,6 +443,14 @@ export default function App() {
         addShape('cylinder');
       } else if (plain && key === 's') {
         addShape('sphere');
+      } else if (plain && key === 'k') {
+        addShape('cone');
+      } else if (plain && key === 'p') {
+        addShape('pyramid');
+      } else if (plain && key === 'd') {
+        addShape('wedge');
+      } else if (plain && key === 't') {
+        addShape('torus');
       } else if (event.key === 'Escape') {
         setSelection([]);
         setReadout(null);
@@ -436,36 +469,19 @@ export default function App() {
       <header className="toolbar">
         <strong className="brand">Plinth3D</strong>
         <div className="group">
-          <button
-            type="button"
-            className="tool-icon"
-            onClick={() => addShape('box')}
-            aria-label="Box"
-            title="Add a box to the plan (B)"
-          >
-            <BoxIcon />
-            <KeyHint k="B" />
-          </button>
-          <button
-            type="button"
-            className="tool-icon"
-            onClick={() => addShape('cylinder')}
-            aria-label="Cylinder"
-            title="Add a cylinder to the plan (C)"
-          >
-            <CylinderIcon />
-            <KeyHint k="C" />
-          </button>
-          <button
-            type="button"
-            className="tool-icon"
-            onClick={() => addShape('sphere')}
-            aria-label="Sphere"
-            title="Add a sphere to the plan (S)"
-          >
-            <SphereIcon />
-            <KeyHint k="S" />
-          </button>
+          {PRIMITIVES.map((p) => (
+            <button
+              key={p.type}
+              type="button"
+              className="tool-icon"
+              onClick={() => addShape(p.type)}
+              aria-label={p.label}
+              title={`Add a ${p.label.toLowerCase()} to the plan (${p.key})`}
+            >
+              <p.Icon />
+              <KeyHint k={p.key} />
+            </button>
+          ))}
         </div>
         <div className="group segmented">
           <button

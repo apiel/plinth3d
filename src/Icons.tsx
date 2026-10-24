@@ -112,3 +112,39 @@ export function DownloadIcon() {
     </Svg>
   );
 }
+
+export function ConeIcon() {
+  return (
+    <Svg>
+      <ellipse cx="12" cy="18" rx="7" ry="2.5" />
+      <path d="M5 18 12 4l7 14" />
+    </Svg>
+  );
+}
+
+export function PyramidIcon() {
+  return (
+    <Svg>
+      <path d="M5 18 12 4l7 14z" />
+      <path d="M5 18 12 21l7-3" />
+    </Svg>
+  );
+}
+
+export function WedgeIcon() {
+  return (
+    <Svg>
+      <path d="M4 18V5l16 13z" />
+      <path d="M4 18h16" />
+    </Svg>
+  );
+}
+
+export function TorusIcon() {
+  return (
+    <Svg>
+      <ellipse cx="12" cy="12" rx="9" ry="5" />
+      <ellipse cx="12" cy="12" rx="4" ry="2" />
+    </Svg>
+  );
+}

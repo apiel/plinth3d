@@ -3,7 +3,7 @@
 
 export type Vec3 = [number, number, number];
 
-export type ShapeType = 'box' | 'cylinder' | 'sphere' | 'mesh';
+export type ShapeType = 'box' | 'cylinder' | 'sphere' | 'cone' | 'pyramid' | 'wedge' | 'torus' | 'mesh';
 
 /** Triangle mesh in the shape's own frame, centred on the origin. Used by merged shapes. */
 export interface MeshGeometry {
@@ -56,6 +56,10 @@ const DEFAULT_SIZE: Record<ShapeType, Vec3> = {
   box: [20, 20, 20],
   cylinder: [20, 30, 20],
   sphere: [20, 20, 20],
+  cone: [20, 30, 20],
+  pyramid: [20, 30, 20],
+  wedge: [20, 20, 20],
+  torus: [30, 10, 30],
   mesh: [20, 20, 20],
 };
 
@@ -63,6 +67,10 @@ const TYPE_LABEL: Record<ShapeType, string> = {
   box: 'Box',
   cylinder: 'Cylinder',
   sphere: 'Sphere',
+  cone: 'Cone',
+  pyramid: 'Pyramid',
+  wedge: 'Wedge',
+  torus: 'Torus',
   mesh: 'Merged',
 };
 

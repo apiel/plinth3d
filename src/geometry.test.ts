@@ -97,3 +97,47 @@ describe('geometry', () => {
     result.delete();
   });
 });
+
+describe('primitives', () => {
+  const shapeOf = (type: 'cone' | 'pyramid' | 'wedge' | 'torus', size: [number, number, number]) => {
+    const shape = createShape(type, createProject().layers[0].id, []);
+    shape.size = size;
+    return shape;
+  };
+
+  it('makes a cone with the volume of a cone', async () => {
+    const wasm = await loadEngine();
+    const cone = localPrimitive(wasm, shapeOf('cone', [20, 30, 20]));
+    // r = 10, h = 30: pi * r^2 * h / 3. The 64-sided base is a little smaller than a circle.
+    const ideal = (Math.PI * 100 * 30) / 3;
+    expect(Math.abs(cone.volume() - ideal) / ideal).toBeLessThan(0.005);
+    cone.delete();
+  });
+
+  it('makes a square pyramid', async () => {
+    const wasm = await loadEngine();
+    const pyramid = localPrimitive(wasm, shapeOf('pyramid', [20, 30, 20]));
+    // 20 x 20 base, 30 high: base * height / 3.
+    expect(pyramid.volume()).toBeCloseTo((20 * 20 * 30) / 3, 0);
+    pyramid.delete();
+  });
+
+  it('makes a wedge that is half a box', async () => {
+    const wasm = await loadEngine();
+    const wedge = localPrimitive(wasm, shapeOf('wedge', [20, 20, 20]));
+    expect(wedge.volume()).toBeCloseTo(20 * 20 * 20 / 2, 0);
+    wedge.delete();
+  });
+
+  it('makes a torus that fills its size', async () => {
+    const wasm = await loadEngine();
+    const torus = localPrimitive(wasm, shapeOf('torus', [30, 10, 30]));
+    const box = torus.boundingBox();
+    expect(box.max[1] - box.min[1]).toBeCloseTo(10, 1);
+    expect(box.max[0] - box.min[0]).toBeCloseTo(30, 1);
+    // 2 * pi^2 * R * r^2 for R = 0.3 and r = 0.2 in unit size, scaled to 30 x 10 x 30.
+    const expected = 2 * Math.PI * Math.PI * 0.3 * 0.2 * 0.2 * 2.5 * 30 * 10 * 30;
+    expect(torus.volume()).toBeCloseTo(expected, -2);
+    torus.delete();
+  });
+});

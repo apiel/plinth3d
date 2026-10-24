@@ -45,7 +45,7 @@ npm run build    # type-check and build to dist/
 
 | Key | Action |
 | --- | --- |
-| B / C / S | Add a box / cylinder / sphere to the plan |
+| B / C / S / K / P / D / T | Add a box / cylinder / sphere / cone / pyramid / wedge / torus to the plan |
 | M / R | Move / rotate tool |
 | G | Merge the selection (Ctrl+G also works) |
 | U | Unmerge: bring back the shapes a merged object was made from |
