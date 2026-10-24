@@ -12,6 +12,7 @@ Shapes are combined with holes, and the result is exported as an STL file for yo
 - Step selector in the toolbar (Off, 0.1 to 10 mm) snaps moves, resizes and the arrows.
 - While moving or resizing, a readout card follows the cursor. A move shows only the moving axes, with the distance moved and the distance from the plan centre. Type into it for an exact value.
 - The edge you hover lightens, and the edge you press turns blue.
+- An orange arrow starts beside the hovered edge and points along the axis it will move, in the direction it grows.
 - Rename a shape by double-clicking its name in the layer list, or in the Name field of the Properties panel.
 - Rotate with the rotate gizmo.
 - Resize by dragging an edge of the dashed box around the selected shape. The edge changes one dimension at a time. Click the edge to switch between its two axes; the readout shows the one that is active. The opposite face stays in place. Each drag is one undo step.

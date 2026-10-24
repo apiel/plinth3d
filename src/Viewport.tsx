@@ -12,6 +12,8 @@ import {
   Group,
   MOUSE,
   type Intersection,
+  ArrowHelper,
+  LineBasicMaterial,
   LineDashedMaterial,
   LineSegments,
   Material,
@@ -44,6 +46,10 @@ const GIZMO_AXES: Record<string, number[]> = { X: [0], Y: [1], Z: [2], XY: [0, 1
 const CARD_OFFSET = 18;
 const HANDLE_HOVER_COLOR = '#9cc2ff';
 const HANDLE_ACTIVE_COLOR = '#2f6bff';
+/** Length of the resize arrow as a fraction of the camera distance. */
+const ARROW_SCREEN_SCALE = 0.12;
+/** Orange stands out on the blue shapes. */
+const ARROW_COLOR = 0xff8a00;
 const DRAG_THRESHOLD = 3;
 /** Width of an edge grab as a fraction of the camera distance, so it is easy to hit on screen. */
 const EDGE_SCREEN_SCALE = 0.012;
@@ -254,6 +260,45 @@ export function Viewport(props: ViewportProps) {
     resizeCanvas();
 
     const scratch = new Vector3();
+
+    // Which of the two faces each edge drags, switched by clicking the edge.
+    const edgeChoice = new Map<string, number>();
+    // The edge under the pointer. Its active face gets the resize arrow.
+    let hintEdge: { shapeId: string; edgeKey: string; sides: { axis: number; sign: number }[] } | null = null;
+    const arrow = new ArrowHelper(new Vector3(1, 0, 0), new Vector3(), 10, ARROW_COLOR);
+    arrow.visible = false;
+    arrow.renderOrder = 20;
+    (arrow.line.material as LineBasicMaterial).depthTest = false;
+    (arrow.cone.material as MeshBasicMaterial).depthTest = false;
+    scene.add(arrow);
+
+    // Points the arrow along the axis the active edge will move, beside that edge, in the direction it grows.
+    const updateArrow = () => {
+      const edge = hintEdge;
+      const group = edge ? (objects.children.find((c) => c.userData.shapeId === edge.shapeId) as Group | undefined) : undefined;
+      const shape = edge ? handlersRef.current.shapes.find((s) => s.id === edge.shapeId) : undefined;
+      if (!edge || !group || !shape || handlersRef.current.selection.length !== 1) {
+        arrow.visible = false;
+        return;
+      }
+      const index = edgeChoice.get(`${edge.shapeId}|${edge.edgeKey}`) ?? 0;
+      const side = edge.sides[index];
+      const other = edge.sides[1 - index];
+      // Start on the edge itself, where the two faces meet, so the arrow reads as the edge's direction.
+      const corner = new Vector3()
+        .setComponent(side.axis, (side.sign * shape.size[side.axis]) / 2)
+        .setComponent(other.axis, (other.sign * shape.size[other.axis]) / 2);
+      const origin = group.localToWorld(corner);
+      const dir = new Vector3().setComponent(side.axis, side.sign).applyQuaternion(group.quaternion);
+      const length = origin.distanceTo(camera.position) * ARROW_SCREEN_SCALE;
+      // Nudge it a little outside the shape, beside the edge, so it does not sit inside the solid.
+      const outward = new Vector3().setComponent(other.axis, other.sign).applyQuaternion(group.quaternion);
+      origin.addScaledVector(outward, length * 0.15);
+      arrow.position.copy(origin);
+      arrow.setDirection(dir);
+      arrow.setLength(length, length * 0.3, length * 0.25);
+      arrow.visible = true;
+    };
     // The readout card sits under the cursor, where the last drag left it.
     let cursor = { x: 0, y: 0 };
     const placeReadout = () => {
@@ -286,6 +331,7 @@ export function Viewport(props: ViewportProps) {
         for (let axis = 0; axis < 3; axis++) if (axis !== along) edge.scale.setComponent(axis, width);
       }
       placeReadout();
+      updateArrow();
       renderer.render(scene, camera);
     });
 
@@ -295,8 +341,6 @@ export function Viewport(props: ViewportProps) {
     let pressAt: { x: number; y: number } | null = null;
     let pressedShape: string | null = null;
     let drag: Drag | null = null;
-    // Which of the two faces each edge drags, switched by clicking the edge.
-    const edgeChoice = new Map<string, number>();
 
     const aim = (event: PointerEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -432,6 +476,13 @@ export function Viewport(props: ViewportProps) {
         aim(event);
         const hovered = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false)[0];
         const key = (hovered?.object.userData.key as string | undefined) ?? null;
+        hintEdge = hovered
+          ? {
+              shapeId: (hovered.object.parent?.userData.shapeId as string) ?? '',
+              edgeKey: key ?? '',
+              sides: hovered.object.userData.sides as { axis: number; sign: number }[],
+            }
+          : null;
         const view = sceneRef.current;
         if (view && key !== view.hoveredHandle) {
           view.hoveredHandle = key;
@@ -499,6 +550,9 @@ export function Viewport(props: ViewportProps) {
     renderer.domElement.addEventListener('pointerdown', onDown, true);
     renderer.domElement.addEventListener('pointermove', onMove);
     renderer.domElement.addEventListener('pointerup', onUp);
+    renderer.domElement.addEventListener('pointerleave', () => {
+      if (!drag) hintEdge = null;
+    });
     // A middle press would otherwise start browser auto-scroll.
     const onAuxDown = (event: MouseEvent) => {
       if (event.button === 1) event.preventDefault();
