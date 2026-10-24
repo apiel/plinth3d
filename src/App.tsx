@@ -432,6 +432,7 @@ export default function App() {
             title="Move (M)"
           >
             <Label text="Move" at={0} />
+            <KeyHint k="M" />
           </button>
           <button
             type="button"
@@ -440,6 +441,7 @@ export default function App() {
             title="Rotate (R)"
           >
             <Label text="Rotate" at={0} />
+            <KeyHint k="R" />
           </button>
         </div>
         <div className="group" role="group" aria-label="Drag plane">
@@ -487,6 +489,7 @@ export default function App() {
           </button>
           <button type="button" onClick={cloneSelected} disabled={selectedShapes.length === 0} title="Clone (Ctrl+D)">
             Clone
+            <KeyHint k="^D" />
           </button>
           <button
             type="button"
@@ -503,6 +506,7 @@ export default function App() {
         <div className="group">
           <button type="button" onClick={mergeSelected} disabled={selectedShapes.length < 2} title="Merge the selection into one object (G)">
             <Label text="Merge" at={3} />
+            <KeyHint k="G" />
           </button>
           <button
             type="button"
@@ -512,6 +516,7 @@ export default function App() {
             title="Hole: cuts the solids when merged (H)"
           >
             <Label text="Hole" at={0} />
+            <KeyHint k="H" />
           </button>
         </div>
         <div className="group">
