@@ -53,6 +53,13 @@ function loadTheme(): Theme {
   return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
+/** The first x position, moving out from the centre, with no shape already on the plan there. */
+function freeX(shapes: Shape[]): number {
+  const candidates = [0, 30, -30, 60, -60, 90, -90, 120, -120];
+  const taken = (x: number) => shapes.some((s) => Math.abs(s.position[0] - x) < 1 && Math.abs(s.position[2]) < 1);
+  return candidates.find((x) => !taken(x)) ?? 0;
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement;
 }
@@ -66,14 +73,23 @@ export default function App() {
   const [showResult, setShowResult] = useState(false);
   const [engine, setEngine] = useState<ManifoldToplevel | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [placing, setPlacing] = useState<ShapeType | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const openInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    const watchdog = setTimeout(() => {
+      setNotice('The geometry engine has not loaded. Reload the page; if it keeps happening, check the console.');
+    }, 15000);
     loadEngine()
-      .then(setEngine)
-      .catch((error: unknown) => setNotice(`The geometry engine failed to load: ${String(error)}`));
+      .then((wasm) => {
+        clearTimeout(watchdog);
+        setEngine(wasm);
+      })
+      .catch((error: unknown) => {
+        clearTimeout(watchdog);
+        setNotice(`The geometry engine failed to load: ${String(error)}`);
+      });
+    return () => clearTimeout(watchdog);
   }, []);
 
   // Autosave in this browser only. Projects are shared through files, not here.
@@ -127,27 +143,28 @@ export default function App() {
 
   const onTransform = ({ id, position, rotation }: TransformChange) => updateShape(id, { position, rotation });
 
-  // Like Tinkercad: pick a primitive, then click the plan to drop it.
-  const togglePlacing = (type: ShapeType) => {
-    setPlacing((current) => (current === type ? null : type));
-    setShowResult(false);
-  };
-
-  const placeShape = (position: Vec3) => {
-    if (!placing) return;
+  // Clicking a primitive adds it to the plan, selected. It goes to the centre, or
+  // beside the shapes already there, so it is never hidden under another one.
+  const addShape = (type: ShapeType) => {
     const layer = layerOf(activeLayerId);
     if (!layer) return;
     if (layer.locked) {
       setNotice(`"${layer.name}" is locked. Unlock it or pick another layer.`);
       return;
     }
-    const shape = createShape(placing, layer.id, project.shapes, position);
-    commit({ ...project, shapes: [...project.shapes, shape] });
+    const base = createShape(type, layer.id, project.shapes);
+    const x = freeX(project.shapes);
+    const shape = { ...base, position: [x, base.size[1] / 2, 0] as Vec3 };
+    commit({
+      ...project,
+      layers: project.layers.map((l) => (l.id === layer.id ? { ...l, visible: true } : l)),
+      shapes: [...project.shapes, shape],
+    });
     setSelectedId(shape.id);
-    setPlacing(null);
+    setShowResult(false);
   };
 
-  const toggleTheme = () => setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
+    const toggleTheme = () => setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
 
   const duplicateSelected = () => {
     if (!selected || selectedLayerLocked) return;
@@ -238,17 +255,14 @@ export default function App() {
       } else if (event.key.toLowerCase() === 'e') {
         setGizmoMode('rotate');
       } else if (event.key === 'Escape') {
-        if (placing) setPlacing(null);
-        else setSelectedId(null);
+        setSelectedId(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const status = placing
-    ? `Click the plan or a shape to place a ${placing}. Esc cancels.`
-    : engine
+  const status = engine
     ? `${visibleShapes(project).length} visible shape${visibleShapes(project).length === 1 ? '' : 's'} · ${project.layers.length} layer${project.layers.length === 1 ? '' : 's'}`
     : 'Loading geometry engine…';
 
@@ -259,28 +273,28 @@ export default function App() {
         <div className="group">
           <button
             type="button"
-            className={`tool-icon${placing === 'box' ? ' toggled' : ''}`}
-            onClick={() => togglePlacing('box')}
+            className="tool-icon"
+            onClick={() => addShape('box')}
             aria-label="Box"
-            title="Box: click, then click the plan to place it"
+            title="Add a box to the plan"
           >
             <BoxIcon />
           </button>
           <button
             type="button"
-            className={`tool-icon${placing === 'cylinder' ? ' toggled' : ''}`}
-            onClick={() => togglePlacing('cylinder')}
+            className="tool-icon"
+            onClick={() => addShape('cylinder')}
             aria-label="Cylinder"
-            title="Cylinder: click, then click the plan to place it"
+            title="Add a cylinder to the plan"
           >
             <CylinderIcon />
           </button>
           <button
             type="button"
-            className={`tool-icon${placing === 'sphere' ? ' toggled' : ''}`}
-            onClick={() => togglePlacing('sphere')}
+            className="tool-icon"
+            onClick={() => addShape('sphere')}
             aria-label="Sphere"
-            title="Sphere: click, then click the plan to place it"
+            title="Add a sphere to the plan"
           >
             <SphereIcon />
           </button>
@@ -383,9 +397,6 @@ export default function App() {
           result={result}
           showResult={showResult}
           theme={theme}
-          placing={placing}
-          onPlace={placeShape}
-          onCancelPlace={() => setPlacing(null)}
           onSelect={(id) => {
             setSelectedId(id);
             const shape = id ? project.shapes.find((s) => s.id === id) : undefined;

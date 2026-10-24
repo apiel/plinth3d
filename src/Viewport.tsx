@@ -16,17 +16,15 @@ import {
   MeshStandardMaterial,
   Object3D,
   PerspectiveCamera,
-  Plane,
   Raycaster,
   Scene,
   Vector2,
-  Vector3,
   WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { ManifoldToplevel } from 'manifold-3d';
-import { createShape, type Layer, type Shape, type ShapeType, type Vec3 } from './model';
+import type { Layer, Shape, Vec3 } from './model';
 import { localPrimitive, meshData, shapePosition, shapeQuaternion, type MeshData } from './geometry';
 
 const DEG_TO_RAD = Math.PI / 180;
@@ -57,11 +55,8 @@ interface ViewportProps {
   result: MeshData | null;
   showResult: boolean;
   theme: Theme;
-  placing: ShapeType | null;
   onSelect: (id: string | null) => void;
   onTransform: (change: TransformChange) => void;
-  onPlace: (position: Vec3) => void;
-  onCancelPlace: () => void;
 }
 
 /** Owns the three.js scene. React state drives it through props. */
@@ -78,7 +73,6 @@ export function Viewport(props: ViewportProps) {
     transform: TransformControls;
     objects: Group;
     resultGroup: Group;
-    ghost: Group;
     grid: GridHelper | null;
   } | null>(null);
 
@@ -124,12 +118,9 @@ export function Viewport(props: ViewportProps) {
 
     const objects = new Group();
     const resultGroup = new Group();
-    // The ghost previews where a primitive will land while one is being placed.
-    const ghost = new Group();
-    ghost.visible = false;
-    scene.add(objects, resultGroup, ghost);
+    scene.add(objects, resultGroup);
 
-    sceneRef.current = { renderer, scene, camera, orbit, transform, objects, resultGroup, ghost, grid: null };
+    sceneRef.current = { renderer, scene, camera, orbit, transform, objects, resultGroup, grid: null };
 
     const resize = () => {
       const { clientWidth, clientHeight } = container;
@@ -149,10 +140,18 @@ export function Viewport(props: ViewportProps) {
     // Picking. A press that turns into a drag is an orbit, not a click.
     const raycaster = new Raycaster();
     const pointer = new Vector2();
-    const plan = new Plane(new Vector3(0, 1, 0), 0);
     let downAt: { x: number; y: number } | null = null;
 
-    const aim = (event: PointerEvent) => {
+    const onDown = (event: PointerEvent) => {
+      downAt = { x: event.clientX, y: event.clientY };
+    };
+
+    const onUp = (event: PointerEvent) => {
+      if (!downAt || transform.axis !== null) return;
+      const moved = Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y);
+      downAt = null;
+      if (moved > 4) return;
+
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.set(
         ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -161,89 +160,24 @@ export function Viewport(props: ViewportProps) {
       // New objects get their world matrix on the next frame; refresh now so picks are exact.
       objects.updateMatrixWorld(true);
       raycaster.setFromCamera(pointer, camera);
-    };
-
-    const shapeIdOf = (object: Object3D): string | null => {
-      let node: Object3D | null = object;
-      while (node && !node.userData.shapeId) node = node.parent;
-      return (node?.userData.shapeId as string | undefined) ?? null;
-    };
-
-    // Where a new shape would land: on the top of a solid under the pointer, or on the plan.
-    // Side faces do not count, so a shape is never dropped beside another one.
-    const placementUnder = (): Vec3 | null => {
-      const height = (ghost.userData.height as number | undefined) ?? 0;
-      const hit = raycaster.intersectObjects(objects.children, true).find((h) => {
-        const id = shapeIdOf(h.object);
-        const shape = id ? handlersRef.current.shapes.find((s) => s.id === id) : undefined;
-        if (!shape || shape.hole || !h.face) return false;
-        const normal = h.face.normal.clone().transformDirection(h.object.matrixWorld);
-        return normal.y > 0.5;
-      });
-      const point = new Vector3();
-      if (hit) {
-        point.copy(hit.point);
-      } else if (!raycaster.ray.intersectPlane(plan, point)) {
-        return null;
-      }
-      const baseY = hit ? hit.point.y : 0;
-      return [Math.round(point.x), round(baseY + height / 2), Math.round(point.z)];
-    };
-
-    const onDown = (event: PointerEvent) => {
-      downAt = { x: event.clientX, y: event.clientY };
-    };
-
-    const onMove = (event: PointerEvent) => {
-      if (!handlersRef.current.placing) {
-        ghost.visible = false;
-        return;
-      }
-      aim(event);
-      const at = placementUnder();
-      ghost.visible = at !== null;
-      if (at) ghost.position.set(at[0], at[1], at[2]);
-    };
-
-    const onLeave = () => {
-      ghost.visible = false;
-    };
-
-    const onUp = (event: PointerEvent) => {
-      if (!downAt || transform.axis !== null) return;
-      const distance = Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y);
-      downAt = null;
-      if (distance > 4) return;
-
-      aim(event);
-      if (handlersRef.current.placing) {
-        const at = placementUnder();
-        if (at) handlersRef.current.onPlace(at);
-        return;
-      }
       const hit = raycaster.intersectObjects(objects.children, true)[0];
-      handlersRef.current.onSelect(hit ? shapeIdOf(hit.object) : null);
-    };
-
-    const onContextMenu = (event: Event) => {
-      event.preventDefault();
-      if (handlersRef.current.placing) handlersRef.current.onCancelPlace();
+      let id: string | null = null;
+      if (hit) {
+        let node: Object3D | null = hit.object;
+        while (node && !node.userData.shapeId) node = node.parent;
+        id = (node?.userData.shapeId as string | undefined) ?? null;
+      }
+      handlersRef.current.onSelect(id);
     };
 
     renderer.domElement.addEventListener('pointerdown', onDown);
     renderer.domElement.addEventListener('pointerup', onUp);
-    renderer.domElement.addEventListener('pointermove', onMove);
-    renderer.domElement.addEventListener('pointerleave', onLeave);
-    renderer.domElement.addEventListener('contextmenu', onContextMenu);
 
     return () => {
       renderer.setAnimationLoop(null);
       observer.disconnect();
       renderer.domElement.removeEventListener('pointerdown', onDown);
       renderer.domElement.removeEventListener('pointerup', onUp);
-      renderer.domElement.removeEventListener('pointermove', onMove);
-      renderer.domElement.removeEventListener('pointerleave', onLeave);
-      renderer.domElement.removeEventListener('contextmenu', onContextMenu);
       transform.dispose();
       orbit.dispose();
       renderer.dispose();
@@ -312,26 +246,6 @@ export function Viewport(props: ViewportProps) {
     view.scene.add(view.grid);
   }, [props.theme]);
 
-  // The ghost is a translucent copy of the primitive being placed.
-  useEffect(() => {
-    const view = sceneRef.current;
-    if (!view || !props.engine) return;
-    clearGroup(view.ghost);
-    view.ghost.visible = false;
-    if (!props.placing) return;
-
-    const shape = createShape(props.placing, '', []);
-    const local = localPrimitive(props.engine, shape);
-    const data = meshData(local);
-    local.delete();
-    const material = solidMaterial(shape.color);
-    material.transparent = true;
-    material.opacity = 0.5;
-    material.depthWrite = false;
-    view.ghost.add(new Mesh(toGeometry(data), material));
-    view.ghost.userData.height = shape.size[1];
-  }, [props.engine, props.placing]);
-
   // Show the boolean result when it changes.
   useEffect(() => {
     const view = sceneRef.current;
@@ -343,7 +257,7 @@ export function Viewport(props: ViewportProps) {
     }
   }, [props.result]);
 
-  return <div className={props.placing ? 'viewport placing' : 'viewport'} ref={containerRef} />;
+  return <div className="viewport" ref={containerRef} />;
 }
 
 function round(value: number): number {

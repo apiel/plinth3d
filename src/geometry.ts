@@ -3,6 +3,9 @@
 // Z-up, which is what slicers expect.
 
 import Module, { type Manifold, type ManifoldToplevel, type Mat4 } from 'manifold-3d';
+// Import the WASM file's URL explicitly. Without this, the dev server can serve
+// its HTML fallback instead, and the engine never loads.
+import manifoldWasmUrl from 'manifold-3d/manifold.wasm?url';
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import type { Shape, Vec3 } from './model';
 
@@ -15,7 +18,9 @@ let enginePromise: Promise<ManifoldToplevel> | null = null;
 /** Loads the WebAssembly geometry engine once and reuses it. */
 export function loadEngine(): Promise<ManifoldToplevel> {
   if (!enginePromise) {
-    enginePromise = Module().then((wasm) => {
+    // In Node (tests) the default loader finds the file itself.
+    const config = typeof window === 'undefined' ? undefined : { locateFile: () => manifoldWasmUrl };
+    enginePromise = Module(config).then((wasm) => {
       wasm.setup();
       return wasm;
     });

@@ -7,7 +7,7 @@ Shapes are combined with holes, and the result is exported as an STL file for yo
 
 ## Features
 
-- Box, cylinder and sphere primitives. Pick one, then click the plan (or the top of a shape) to place it. Esc or right-click cancels.
+- Box, cylinder and sphere primitives. Click an icon in the toolbar to add one to the plan; it is selected straight away.
 - Move and rotate gizmos (snapping to 1 mm and 15°).
 - Light and dark themes, from the toolbar. Your choice is remembered.
 - Holes: a shape marked as a hole is subtracted from all solids on visible layers.
