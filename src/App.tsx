@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ManifoldToplevel } from 'manifold-3d';
-import { Viewport, type DragPlane, type GizmoMode, type Theme, type TransformChange } from './Viewport';
+import { Viewport, type DragPlane, type GizmoMode, type ReadoutTarget, type Theme } from './Viewport';
 import { BoxIcon, CylinderIcon, MoonIcon, SphereIcon, SunIcon } from './Icons';
 import { LayerPanel } from './LayerPanel';
 import { Inspector } from './Inspector';
@@ -17,7 +17,7 @@ import {
   type ShapeType,
   type Vec3,
 } from './model';
-import { encodeBinarySTL, loadEngine, resultMesh } from './geometry';
+import { encodeBinarySTL, loadEngine, resizeAlongAxis, resultMesh } from './geometry';
 
 const AUTOSAVE_KEY = 'plinth3d:autosave';
 const HISTORY_LIMIT = 100;
@@ -81,6 +81,10 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [dragPlane, setDragPlane] = useState<DragPlane>('XZ');
+  // Snap step for moving and resizing, in mm. 0 turns snapping off.
+  const [snap, setSnap] = useState<number>(1);
+  // The move or resize the readout card is showing for the selected shape.
+  const [readout, setReadout] = useState<ReadoutTarget | null>(null);
   const openInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -148,7 +152,6 @@ export default function App() {
     commit({ ...project, shapes: project.shapes.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
   };
 
-  const onTransform = ({ id, position, rotation }: TransformChange) => updateShape(id, { position, rotation });
 
   // Clicking a primitive adds it to the plan, selected. It goes to the centre, or
   // beside the shapes already there, so it is never hidden under another one.
@@ -172,8 +175,22 @@ export default function App() {
   };
 
   // A move or resize drag is one undo step: the state before the drag is saved when it starts.
-  const startEdit = () => {
+  const startEdit = (target: ReadoutTarget | null) => {
     setHistory((past) => [...past.slice(-(HISTORY_LIMIT - 1)), project]);
+    setReadout(target);
+  };
+
+  // A value typed into the readout card. Each edit is one undo step.
+  const editReadout = (target: ReadoutTarget, index: number, value: number) => {
+    const shape = project.shapes.find((s) => s.id === target.id);
+    if (!shape) return;
+    if (target.kind === 'move') {
+      const position = [...shape.position] as Vec3;
+      position[index] = value;
+      updateShape(shape.id, { position });
+      return;
+    }
+    updateShape(shape.id, resizeAlongAxis(shape, target.axis, target.sign, Math.max(0.1, value)));
   };
 
   // Live updates during a drag. They change the project without adding undo steps.
@@ -276,6 +293,7 @@ export default function App() {
         setGizmoMode('rotate');
       } else if (event.key === 'Escape') {
         setSelectedId(null);
+        setReadout(null);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -350,6 +368,23 @@ export default function App() {
               {plane}
             </button>
           ))}
+        </div>
+        <div className="group">
+          <label className="group-label" htmlFor="snap-step">Step</label>
+          <select
+            id="snap-step"
+            value={snap}
+            onChange={(e) => setSnap(Number(e.target.value))}
+            title="Snap step for moving and resizing"
+          >
+            <option value={0}>Off</option>
+            <option value={0.1}>0.1 mm</option>
+            <option value={0.5}>0.5 mm</option>
+            <option value={1}>1 mm</option>
+            <option value={2}>2 mm</option>
+            <option value={5}>5 mm</option>
+            <option value={10}>10 mm</option>
+          </select>
         </div>
         <div className="group">
           <button type="button" onClick={undo} disabled={history.length === 0} title="Undo (Ctrl+Z)">
@@ -436,9 +471,11 @@ export default function App() {
             const shape = id ? project.shapes.find((s) => s.id === id) : undefined;
             if (shape) setActiveLayerId(shape.layerId);
           }}
-          onTransform={onTransform}
           dragPlane={dragPlane}
           onEditStart={startEdit}
+          onReadoutEdit={editReadout}
+          snap={snap}
+          readout={readout}
           onShapeLive={shapeLive}
         />
         <footer className="statusbar">

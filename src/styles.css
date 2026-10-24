@@ -393,3 +393,53 @@ select {
   color: var(--muted);
   font-size: 12px;
 }
+
+.readout {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: none;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.readout-title {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.readout-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.readout-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.readout-field input {
+  width: 70px;
+  padding: 2px 4px;
+}
+
+.readout-delta {
+  color: var(--muted);
+}
+
+.readout-footer {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}

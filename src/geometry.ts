@@ -177,3 +177,22 @@ export function resultMesh(wasm: ManifoldToplevel, shapes: Shape[]): MeshData | 
     manifold.delete();
   }
 }
+
+/** Rounds to the nearest step. A step of 0 means no snapping, only tidy decimals. */
+export function snapTo(value: number, step: number): number {
+  const snapped = step > 0 ? Math.round(value / step) * step : value;
+  return Math.round(snapped * 1000) / 1000;
+}
+
+/**
+ * The size and position a shape gets when one axis is stretched to `extent`.
+ * The face opposite the dragged handle stays where it is: the centre moves by half the change.
+ */
+export function resizeAlongAxis(shape: Shape, axis: number, sign: number, extent: number): { size: Vec3; position: Vec3 } {
+  const size = [...shape.size] as Vec3;
+  size[axis] = extent;
+  const change = sign * (extent - shape.size[axis]);
+  const dir = new Vector3().setComponent(axis, 1).applyQuaternion(shapeQuaternion(shape));
+  const position = shape.position.map((value, i) => Math.round((value + (dir.getComponent(i) * change) / 2) * 1000) / 1000) as Vec3;
+  return { size, position };
+}

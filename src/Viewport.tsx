@@ -31,15 +31,23 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { ManifoldToplevel } from 'manifold-3d';
 import type { Layer, Shape, Vec3 } from './model';
-import { localPrimitive, meshData, shapePosition, shapeQuaternion, type MeshData } from './geometry';
+import { localPrimitive, meshData, resizeAlongAxis, shapePosition, shapeQuaternion, snapTo, type MeshData } from './geometry';
 
 const DEG_TO_RAD = Math.PI / 180;
 const HOLE_COLOR = '#ff4d4d';
 const RESULT_COLOR = '#c9d2e0';
-const MIN_SIZE = 1;
+const MIN_SIZE = 0.1;
+const AXIS_NAMES = ['Width', 'Height', 'Depth'];
+const AXIS_LABELS = ['X', 'Y', 'Z'];
+const PLANE_AXES: Record<DragPlane, number[]> = { XY: [0, 1], XZ: [0, 2], YZ: [1, 2] };
+const GIZMO_AXES: Record<string, number[]> = { X: [0], Y: [1], Z: [2], XY: [0, 1], XZ: [0, 2], YZ: [1, 2], XYZ: [0, 1, 2] };
+const HANDLE_COLOR = '#ffffff';
+const CARD_OFFSET = 18;
+const HANDLE_HOVER_COLOR = '#9cc2ff';
+const HANDLE_ACTIVE_COLOR = '#2f6bff';
 const DRAG_THRESHOLD = 3;
 /** Handle size as a fraction of the camera distance, so handles look the same size on screen. */
-const HANDLE_SCREEN_SCALE = 0.012;
+const HANDLE_SCREEN_SCALE = 0.016;
 
 export type Theme = 'dark' | 'light';
 
@@ -59,11 +67,10 @@ const THEMES = {
 
 export type GizmoMode = 'translate' | 'rotate';
 
-export interface TransformChange {
-  id: string;
-  position: Vec3;
-  rotation: Vec3;
-}
+/** A move or resize that the readout card shows and can edit. */
+export type ReadoutTarget =
+  | { id: string; kind: 'move'; axes: number[]; start: Vec3 }
+  | { id: string; kind: 'resize'; axis: number; sign: number };
 
 interface ViewportProps {
   engine: ManifoldToplevel | null;
@@ -72,13 +79,16 @@ interface ViewportProps {
   selectedId: string | null;
   gizmoMode: GizmoMode;
   dragPlane: DragPlane;
+  snap: number;
+  readout: ReadoutTarget | null;
   result: MeshData | null;
   showResult: boolean;
   theme: Theme;
   onSelect: (id: string | null) => void;
-  onTransform: (change: TransformChange) => void;
   /** Called once when a drag actually starts changing a shape. Used for one undo step. */
-  onEditStart: () => void;
+  onEditStart: (target: ReadoutTarget | null) => void;
+  /** Called when a value is typed into the readout card. */
+  onReadoutEdit: (target: ReadoutTarget, index: number, value: number) => void;
   /** Called on every step of a drag. Does not add undo steps. */
   onShapeLive: (id: string, patch: Partial<Shape>) => void;
 }
@@ -86,6 +96,7 @@ interface ViewportProps {
 /** The drag in progress, if any. */
 type Drag = {
   moved: boolean;
+  target: ReadoutTarget;
 } & (
   | { kind: 'move'; id: string; plane: Plane; start: Vector3; startPosition: Vec3 }
   | {
@@ -97,14 +108,14 @@ type Drag = {
       axis: number;
       sign: number;
       startAlong: number;
-      startSize: Vec3;
-      startPosition: Vec3;
+      startShape: Shape;
     }
 );
 
 /** Owns the three.js scene. React state drives it through props. */
 export function Viewport(props: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const readoutRef = useRef<HTMLDivElement>(null);
   const handlersRef = useRef<ViewportProps>(props);
   handlersRef.current = props;
 
@@ -118,6 +129,9 @@ export function Viewport(props: ViewportProps) {
     resultGroup: Group;
     grid: GridHelper | null;
     handles: Mesh[];
+    gizmoDragging: boolean;
+    activeHandle: string | null;
+    hoveredHandle: string | null;
   } | null>(null);
 
   // One-time scene setup.
@@ -146,17 +160,32 @@ export function Viewport(props: ViewportProps) {
     transform.addEventListener('dragging-changed', (event) => {
       const dragging = (event as unknown as { value: boolean }).value;
       orbit.enabled = !dragging;
-      if (!dragging) {
-        const object = transform.object;
-        if (object) {
-          const rotation = new Euler().setFromQuaternion(object.quaternion, 'XYZ');
-          handlersRef.current.onTransform({
-            id: object.userData.shapeId as string,
-            position: [round(object.position.x), round(object.position.y), round(object.position.z)],
-            rotation: [rotation.x, rotation.y, rotation.z].map((r) => round(r / DEG_TO_RAD)) as Vec3,
-          });
-        }
-      }
+      const view = sceneRef.current;
+      if (!view) return;
+      view.gizmoDragging = dragging;
+      const object = transform.object;
+      const id = object?.userData.shapeId as string | undefined;
+      if (!dragging || !object || !id) return;
+      const shape = handlersRef.current.shapes.find((s) => s.id === id);
+      if (!shape) return;
+      // The first step of the drag is one undo step. Rotation shows no readout.
+      const translating = handlersRef.current.gizmoMode === 'translate';
+      handlersRef.current.onEditStart(
+        translating
+          ? { id, kind: 'move', axes: GIZMO_AXES[transform.axis ?? 'XYZ'] ?? [0, 1, 2], start: [...shape.position] as Vec3 }
+          : null,
+      );
+    });
+    // Live: the shape follows the gizmo while it is dragged.
+    transform.addEventListener('objectChange', () => {
+      const object = transform.object;
+      const id = object?.userData.shapeId as string | undefined;
+      if (!object || !id || !sceneRef.current?.gizmoDragging) return;
+      const rotation = new Euler().setFromQuaternion(object.quaternion, 'XYZ');
+      handlersRef.current.onShapeLive(id, {
+        position: [round(object.position.x), round(object.position.y), round(object.position.z)],
+        rotation: [rotation.x, rotation.y, rotation.z].map((r) => round(r / DEG_TO_RAD)) as Vec3,
+      });
     });
     scene.add(transform);
 
@@ -164,7 +193,20 @@ export function Viewport(props: ViewportProps) {
     const resultGroup = new Group();
     scene.add(objects, resultGroup);
 
-    sceneRef.current = { renderer, scene, camera, orbit, transform, objects, resultGroup, grid: null, handles: [] };
+    sceneRef.current = {
+      renderer,
+      scene,
+      camera,
+      orbit,
+      transform,
+      objects,
+      resultGroup,
+      grid: null,
+      handles: [],
+      gizmoDragging: false,
+      activeHandle: null,
+      hoveredHandle: null,
+    };
 
     const resizeCanvas = () => {
       const { clientWidth, clientHeight } = container;
@@ -177,12 +219,36 @@ export function Viewport(props: ViewportProps) {
     resizeCanvas();
 
     const scratch = new Vector3();
+    // The readout card sits under the cursor, where the last drag left it.
+    let cursor = { x: 0, y: 0 };
+    const placeReadout = () => {
+      const card = readoutRef.current;
+      if (!card) return;
+      const info = handlersRef.current.readout;
+      if (!info || info.id !== handlersRef.current.selectedId) {
+        card.style.display = 'none';
+        return;
+      }
+      const { clientWidth, clientHeight } = container;
+      let x = cursor.x + CARD_OFFSET;
+      let y = cursor.y + CARD_OFFSET;
+      if (x + card.offsetWidth > clientWidth) x = cursor.x - card.offsetWidth - CARD_OFFSET;
+      if (y + card.offsetHeight > clientHeight) y = cursor.y - card.offsetHeight - CARD_OFFSET;
+      card.style.display = 'block';
+      card.style.transform = `translate(${x}px, ${y}px)`;
+    };
+    const trackCursor = (event: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    };
+
     renderer.setAnimationLoop(() => {
       orbit.update();
       // Keep the face handles a constant size on screen, however far the camera is.
       for (const handle of sceneRef.current?.handles ?? []) {
         handle.scale.setScalar(handle.getWorldPosition(scratch).distanceTo(camera.position) * HANDLE_SCREEN_SCALE);
       }
+      placeReadout();
       renderer.render(scene, camera);
     });
 
@@ -241,10 +307,15 @@ export function Viewport(props: ViewportProps) {
         axis,
         sign,
         startAlong: hitAtStart.sub(origin).dot(dir),
-        startSize: [...shape.size] as Vec3,
-        startPosition: [...shape.position] as Vec3,
+        startShape: shape,
+        target: { id, kind: 'resize', axis, sign },
       };
       orbit.enabled = false;
+      const view = sceneRef.current;
+      if (view) {
+        view.activeHandle = `${axis}:${sign}`;
+        paintHandles(view);
+      }
     };
 
     // Dragging the body moves the shape within the chosen drag plane.
@@ -257,11 +328,18 @@ export function Viewport(props: ViewportProps) {
         plane,
         start: point.clone(),
         startPosition: [...shape.position] as Vec3,
+        target: {
+          id: shape.id,
+          kind: 'move',
+          axes: PLANE_AXES[handlersRef.current.dragPlane],
+          start: [...shape.position] as Vec3,
+        },
       };
       orbit.enabled = false;
     };
 
     const onDown = (event: PointerEvent) => {
+      trackCursor(event);
       pressAt = { x: event.clientX, y: event.clientY };
       pressedShape = null;
       aim(event);
@@ -290,11 +368,23 @@ export function Viewport(props: ViewportProps) {
     };
 
     const onMove = (event: PointerEvent) => {
-      if (!drag) return;
+      if (!drag) {
+        // Hover highlight on the face handles.
+        aim(event);
+        const hovered = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false)[0];
+        const key = (hovered?.object.userData.key as string | undefined) ?? null;
+        const view = sceneRef.current;
+        if (view && key !== view.hoveredHandle) {
+          view.hoveredHandle = key;
+          paintHandles(view);
+        }
+        return;
+      }
+      trackCursor(event);
       if (!drag.moved) {
         if (!pressAt || Math.hypot(event.clientX - pressAt.x, event.clientY - pressAt.y) < DRAG_THRESHOLD) return;
         drag.moved = true;
-        handlersRef.current.onEditStart();
+        handlersRef.current.onEditStart(drag.target);
       }
 
       aim(event);
@@ -303,25 +393,24 @@ export function Viewport(props: ViewportProps) {
 
       if (drag.kind === 'move') {
         const delta = hit.sub(drag.start);
-        const position = drag.startPosition.map((value, i) => Math.round(value + delta.getComponent(i))) as Vec3;
+        const position = drag.startPosition.map((value, i) => snapTo(value + delta.getComponent(i), handlersRef.current.snap)) as Vec3;
         handlersRef.current.onShapeLive(drag.id, { position });
         return;
       }
 
       const along = hit.sub(drag.origin).dot(drag.dir) - drag.startAlong;
-      const startExtent = drag.startSize[drag.axis];
-      const extent = Math.max(MIN_SIZE, Math.round(startExtent + drag.sign * along));
-      const change = drag.sign * (extent - startExtent);
-      const size = [...drag.startSize] as Vec3;
-      size[drag.axis] = extent;
-      const { dir, startPosition } = drag;
-      const position = startPosition.map((value, i) => round(value + dir.getComponent(i) * change / 2)) as Vec3;
+      const extent = Math.max(MIN_SIZE, snapTo(drag.startShape.size[drag.axis] + drag.sign * along, handlersRef.current.snap));
+      const { size, position } = resizeAlongAxis(drag.startShape, drag.axis, drag.sign, extent);
       handlersRef.current.onShapeLive(drag.id, { size, position });
     };
 
     const onUp = (event: PointerEvent) => {
       if (drag) {
         drag = null;
+        if (sceneRef.current) {
+          sceneRef.current.activeHandle = null;
+          paintHandles(sceneRef.current);
+        }
         orbit.enabled = true;
         pressAt = null;
         return;
@@ -357,7 +446,8 @@ export function Viewport(props: ViewportProps) {
   // Rebuild the per-shape meshes when shapes, layers or selection change.
   useEffect(() => {
     const view = sceneRef.current;
-    if (!view || !props.engine) return;
+    // While the gizmo is dragged, the object already sits where the gizmo put it. Rebuilding now would drop the drag.
+    if (!view || !props.engine || view.gizmoDragging) return;
     const { objects, transform } = view;
     const { engine, shapes, layers, selectedId, showResult, theme } = props;
     const lockedLayers = new Set(layers.filter((l) => l.locked).map((l) => l.id));
@@ -393,8 +483,14 @@ export function Viewport(props: ViewportProps) {
         }
       }
     }
+    paintHandles(view);
     transform.setMode(props.gizmoMode);
   }, [props.engine, props.shapes, props.layers, props.selectedId, props.showResult, props.gizmoMode, props.theme]);
+
+  // The move arrows snap to the same step as dragging.
+  useEffect(() => {
+    sceneRef.current?.transform.setTranslationSnap(props.snap > 0 ? props.snap : null);
+  }, [props.snap]);
 
   // Follow the theme: background and grid colours.
   useEffect(() => {
@@ -422,7 +518,99 @@ export function Viewport(props: ViewportProps) {
     }
   }, [props.result]);
 
-  return <div className="viewport" ref={containerRef} />;
+  const readoutShape =
+    props.readout && props.readout.id === props.selectedId
+      ? props.shapes.find((s) => s.id === props.readout?.id)
+      : undefined;
+
+  return (
+    <div className="viewport" ref={containerRef}>
+      <div className="readout" ref={readoutRef}>
+        {readoutShape && props.readout && (
+          <ReadoutFields target={props.readout} shape={readoutShape} step={props.snap} onEdit={props.onReadoutEdit} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Editable values for a move or resize, shown in the readout card. */
+function ReadoutFields({
+  target,
+  shape,
+  step,
+  onEdit,
+}: {
+  target: ReadoutTarget;
+  shape: Shape;
+  step: number;
+  onEdit: (target: ReadoutTarget, index: number, value: number) => void;
+}) {
+  if (target.kind === 'resize') {
+    return (
+      <div className="readout-body">
+        <span className="readout-title">Size (mm)</span>
+        <AxisInput
+          label={AXIS_NAMES[target.axis]}
+          value={shape.size[target.axis]}
+          step={step}
+          onChange={(value) => onEdit(target, target.axis, value)}
+        />
+      </div>
+    );
+  }
+
+  // Only the axes that are moving. The centre distance is measured on those axes.
+  const centreDistance = Math.hypot(...target.axes.map((i) => shape.position[i]));
+  return (
+    <div className="readout-body">
+      <span className="readout-title">Move (mm)</span>
+      {target.axes.map((i) => (
+        <div className="readout-row" key={i}>
+          <AxisInput
+            label={AXIS_LABELS[i]}
+            value={shape.position[i]}
+            step={step}
+            onChange={(value) => onEdit(target, i, value)}
+          />
+          <span className="readout-delta">moved {signed(shape.position[i] - target.start[i])}</span>
+        </div>
+      ))}
+      <span className="readout-footer">From plan centre: {round(centreDistance)} mm</span>
+    </div>
+  );
+}
+
+function AxisInput({
+  label,
+  value,
+  step,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  step: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="readout-field">
+      <span>{label}</span>
+      <input
+        type="number"
+        step={step > 0 ? step : 0.1}
+        value={round(value)}
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          if (e.target.value.trim() !== '' && Number.isFinite(next)) onChange(next);
+        }}
+      />
+    </label>
+  );
+}
+
+function signed(value: number): string {
+  const rounded = round(value);
+  return rounded > 0 ? `+${rounded}` : `${rounded}`;
 }
 
 /** Dashed outline of the shape's bounding box, drawn in the shape's own frame. */
@@ -441,11 +629,12 @@ function makeHandles(size: Vec3, outlineColor: string): Mesh[] {
   for (let axis = 0; axis < 3; axis++) {
     for (const sign of [-1, 1]) {
       const box = new BoxGeometry(1, 1, 1);
-      const mesh = new Mesh(box, new MeshBasicMaterial({ color: '#ffffff', depthTest: false }));
+      const mesh = new Mesh(box, new MeshBasicMaterial({ color: HANDLE_COLOR, depthTest: false }));
       mesh.position.setComponent(axis, (sign * size[axis]) / 2);
       mesh.renderOrder = 10;
       mesh.userData.handleAxis = axis;
       mesh.userData.handleSign = sign;
+      mesh.userData.key = `${axis}:${sign}`;
 
       const edges = new LineSegments(
         new EdgesGeometry(box),
@@ -457,6 +646,15 @@ function makeHandles(size: Vec3, outlineColor: string): Mesh[] {
     }
   }
   return handles;
+}
+
+/** Colours each face handle: blue while it is dragged, lighter when hovered. */
+function paintHandles(view: { handles: Mesh[]; activeHandle: string | null; hoveredHandle: string | null }) {
+  for (const handle of view.handles) {
+    const key = handle.userData.key as string;
+    const color = key === view.activeHandle ? HANDLE_ACTIVE_COLOR : key === view.hoveredHandle ? HANDLE_HOVER_COLOR : HANDLE_COLOR;
+    (handle.material as MeshBasicMaterial).color.set(color);
+  }
 }
 
 function round(value: number): number {

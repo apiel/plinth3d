@@ -9,6 +9,9 @@ Shapes are combined with holes, and the result is exported as an STL file for yo
 
 - Box, cylinder and sphere primitives. Click an icon in the toolbar to add one to the plan; it is selected straight away.
 - Move with the arrow gizmo, or drag a shape's body. The Drag in XY / XZ / YZ buttons choose the plane a body drag moves in. XZ (across the plan) is the default.
+- Step selector in the toolbar (Off, 0.1 to 10 mm) snaps moves, resizes and the arrows.
+- While moving or resizing, a readout card follows the cursor. A move shows only the moving axes, with the distance moved and the distance from the plan centre. Type into it for an exact value.
+- The face handle you press turns blue, and it lightens when hovered.
 - Rotate with the rotate gizmo.
 - Resize by dragging a white face handle of the selected shape. The opposite face stays in place. Each drag is one undo step.
 - Light and dark themes, from the toolbar. Your choice is remembered.
