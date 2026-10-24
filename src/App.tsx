@@ -17,6 +17,7 @@ import {
   type ShapeType,
   type Vec3,
 } from './model';
+import { addLayerFromFile, parseLayer, serializeLayer } from './model';
 import { encodeBinarySTL, loadEngine, mergeShapes, restoreSources, resizeAlongAxis, resultMesh } from './geometry';
 
 const AUTOSAVE_KEY = 'plinth3d:autosave';
@@ -305,6 +306,24 @@ export default function App() {
     const hole = !selectedShapes[selectedShapes.length - 1].hole;
     const ids = selectedShapes.map((s) => s.id);
     commit({ ...project, shapes: project.shapes.map((s) => (ids.includes(s.id) ? { ...s, hole } : s)) });
+  };
+
+  const exportLayer = (layerId: string) => {
+    const layer = project.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+    const text = serializeLayer(project, layerId);
+    const name = layer.name.replace(/[^a-z0-9-_ ]/gi, '').trim() || 'layer';
+    downloadBlob(new Blob([text], { type: 'application/json' }), `${name}.plinth3d-layer.json`);
+  };
+
+  const importLayer = async (file: File) => {
+    try {
+      const next = addLayerFromFile(project, parseLayer(await file.text()));
+      commit(next);
+      setActiveLayerId(next.layers[next.layers.length - 1].id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not import that file.');
+    }
   };
 
   const addLayer = () => {
@@ -603,6 +622,8 @@ export default function App() {
           onRename={renameLayer}
           onToggle={toggleLayer}
           onDelete={deleteLayer}
+          onExportLayer={exportLayer}
+          onImportLayer={importLayer}
           onSelect={(id, additive) => selectShape(id, additive)}
           onRenameShape={(id, name) => updateShape(id, { name })}
           onToggleShapeHidden={(id) => {

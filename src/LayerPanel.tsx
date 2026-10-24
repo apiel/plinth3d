@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { DownloadIcon } from './Icons';
 import type { Layer, Shape } from './model';
 
 interface LayerPanelProps {
@@ -8,6 +9,8 @@ interface LayerPanelProps {
   selectedIds: string[];
   onActivate: (layerId: string) => void;
   onAdd: () => void;
+  onExportLayer: (layerId: string) => void;
+  onImportLayer: (file: File) => void;
   onRename: (layerId: string, name: string) => void;
   onToggle: (layerId: string, key: 'visible' | 'locked') => void;
   onDelete: (layerId: string) => void;
@@ -19,6 +22,7 @@ interface LayerPanelProps {
 /** Photoshop-style layer list. Each layer lists the shapes it contains. */
 export function LayerPanel(props: LayerPanelProps) {
   const [editing, setEditing] = useState<string | null>(null);
+  const importInput = useRef<HTMLInputElement>(null);
   const [editingShape, setEditingShape] = useState<string | null>(null);
 
   // Newest layers appear at the top, as in Photoshop.
@@ -28,9 +32,25 @@ export function LayerPanel(props: LayerPanelProps) {
     <section className="panel">
       <header className="panel-header">
         <h2>Layers</h2>
-        <button type="button" onClick={props.onAdd} title="New layer">
-          + Layer
-        </button>
+        <div className="button-row">
+          <button type="button" onClick={() => importInput.current?.click()} title="Import a layer file">
+            Import
+          </button>
+          <button type="button" onClick={props.onAdd} title="New layer">
+            + Layer
+          </button>
+          <input
+            ref={importInput}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) props.onImportLayer(file);
+              e.target.value = '';
+            }}
+          />
+        </div>
       </header>
       <ul className="layer-list">
         {ordered.map((layer) => {
@@ -101,6 +121,18 @@ export function LayerPanel(props: LayerPanelProps) {
                     ×
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="icon-button layer-action"
+                  title="Export layer to a file"
+                  aria-label="Export layer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    props.onExportLayer(layer.id);
+                  }}
+                >
+                  <DownloadIcon />
+                </button>
               </div>
               {members.length > 0 && (
                 <ul className="shape-list">

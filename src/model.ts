@@ -142,3 +142,50 @@ export function parseProject(text: string): Project {
   }
   return { layers, shapes: doc.shapes as Shape[] };
 }
+
+export const LAYER_FORMAT = 'plinth3d-layer';
+
+/** One layer and its shapes, as a file that can be shared and imported into any project. */
+export function serializeLayer(project: Project, layerId: string): string {
+  const layer = project.layers.find((l) => l.id === layerId);
+  if (!layer) throw new Error('That layer does not exist.');
+  const shapes = project.shapes.filter((s) => s.layerId === layerId);
+  return JSON.stringify({ format: LAYER_FORMAT, version: PROJECT_VERSION, layer, shapes }, null, 2);
+}
+
+/** Reads a layer file. Throws a readable error when the file is not a layer. */
+export function parseLayer(text: string): { layer: Layer; shapes: Shape[] } {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('The file is not valid JSON.');
+  }
+  const doc = data as Record<string, unknown>;
+  if (typeof doc !== 'object' || doc === null || doc.format !== LAYER_FORMAT) {
+    throw new Error('This file is not a Plinth3D layer.');
+  }
+  if (doc.version !== PROJECT_VERSION) throw new Error(`Unsupported layer version: ${String(doc.version)}.`);
+  const layer = doc.layer as Layer | undefined;
+  if (!layer || typeof layer.name !== 'string') throw new Error('The layer file has no layer.');
+  if (!Array.isArray(doc.shapes)) throw new Error('The layer file has no shapes.');
+  for (const shape of doc.shapes as Shape[]) {
+    if (!(shape.type in DEFAULT_SIZE)) throw new Error(`Shape "${shape.name}" has an unknown type.`);
+    if (!isVec3(shape.position) || !isVec3(shape.rotation) || !isVec3(shape.size)) {
+      throw new Error(`Shape "${shape.name}" has invalid transform values.`);
+    }
+  }
+  return { layer, shapes: doc.shapes as Shape[] };
+}
+
+/** Gives a shape and everything it was merged from fresh ids, so imports never clash with existing shapes. */
+function withFreshIds(shape: Shape): Shape {
+  return { ...shape, id: createId(), sources: shape.sources?.map(withFreshIds) };
+}
+
+/** Adds a parsed layer to a project as a new layer, with new ids throughout. */
+export function addLayerFromFile(project: Project, parsed: { layer: Layer; shapes: Shape[] }): Project {
+  const layer: Layer = { ...parsed.layer, id: createId() };
+  const shapes = parsed.shapes.map((s) => ({ ...withFreshIds(s), layerId: layer.id }));
+  return { layers: [...project.layers, layer], shapes: [...project.shapes, ...shapes] };
+}

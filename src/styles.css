@@ -509,3 +509,28 @@ select {
   pointer-events: none;
   z-index: 3;
 }
+
+/* Layer panel header: keep the buttons on one line. */
+.panel-header .button-row {
+  gap: 6px;
+}
+
+.panel-header .button-row button {
+  white-space: nowrap;
+  padding: 4px 8px;
+}
+
+/* Layer row actions are real icons, not tiny glyphs. */
+.layer-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  padding: 2px;
+}
+
+.layer-action svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}

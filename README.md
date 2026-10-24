@@ -14,6 +14,7 @@ Shapes are combined with holes, and the result is exported as an STL file for yo
 - The edge you hover lightens, and the edge you press turns blue.
 - An orange arrow starts beside the hovered edge and points along the axis it will move, in the direction it grows.
 - Shift + drag on empty space draws a rectangle that adds the shapes inside it to the selection.
+- Export a layer with its ⤓ button, and import a layer file with the Import button in the Layers panel. An imported layer is added as a new layer.
 - Hide a shape with its eye button in the layer list, or untick Visible in Properties. Hidden shapes are left out of the scene, the result and the export.
 - Rename a shape by double-clicking its name in the layer list, or in the Name field of the Properties panel.
 - Rotate with the rotate gizmo.
