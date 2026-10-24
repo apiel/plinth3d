@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ManifoldToplevel } from 'manifold-3d';
 import { Viewport, type DragPlane, type GizmoMode, type ReadoutTarget, type Theme } from './Viewport';
-import { BoxIcon, CylinderIcon, MoonIcon, SphereIcon, SunIcon, TrashIcon, UndoIcon } from './Icons';
+import { BoxIcon, CylinderIcon, KeyHint, Label, MoonIcon, SphereIcon, SunIcon, TrashIcon, UndoIcon } from './Icons';
 import { LayerPanel } from './LayerPanel';
 import { Inspector } from './Inspector';
 import {
@@ -347,21 +347,34 @@ export default function App() {
     const onKey = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) return;
       const mod = event.ctrlKey || event.metaKey;
-      if (mod && event.key.toLowerCase() === 'z') {
+      const key = event.key.toLowerCase();
+      // Single letters work alone, without Ctrl or Alt.
+      const plain = !mod && !event.altKey;
+      if (mod && key === 'z') {
         event.preventDefault();
         undo();
-      } else if (mod && event.key.toLowerCase() === 'd') {
+      } else if (mod && key === 'd') {
         event.preventDefault();
         cloneSelected();
-      } else if (mod && event.key.toLowerCase() === 'g') {
+      } else if (mod && key === 'g') {
         event.preventDefault();
         mergeSelected();
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         deleteSelected();
-      } else if (event.key.toLowerCase() === 'w') {
+      } else if (plain && (key === 'm' || key === 'w')) {
         setGizmoMode('translate');
-      } else if (event.key.toLowerCase() === 'e') {
+      } else if (plain && (key === 'r' || key === 'e')) {
         setGizmoMode('rotate');
+      } else if (plain && key === 'g') {
+        mergeSelected();
+      } else if (plain && key === 'h') {
+        toggleHoleSelected();
+      } else if (plain && key === 'b') {
+        addShape('box');
+      } else if (plain && key === 'c') {
+        addShape('cylinder');
+      } else if (plain && key === 's') {
+        addShape('sphere');
       } else if (event.key === 'Escape') {
         setSelection([]);
         setReadout(null);
@@ -385,27 +398,30 @@ export default function App() {
             className="tool-icon"
             onClick={() => addShape('box')}
             aria-label="Box"
-            title="Add a box to the plan"
+            title="Add a box to the plan (B)"
           >
             <BoxIcon />
+            <KeyHint k="B" />
           </button>
           <button
             type="button"
             className="tool-icon"
             onClick={() => addShape('cylinder')}
             aria-label="Cylinder"
-            title="Add a cylinder to the plan"
+            title="Add a cylinder to the plan (C)"
           >
             <CylinderIcon />
+            <KeyHint k="C" />
           </button>
           <button
             type="button"
             className="tool-icon"
             onClick={() => addShape('sphere')}
             aria-label="Sphere"
-            title="Add a sphere to the plan"
+            title="Add a sphere to the plan (S)"
           >
             <SphereIcon />
+            <KeyHint k="S" />
           </button>
         </div>
         <div className="group">
@@ -413,17 +429,17 @@ export default function App() {
             type="button"
             className={gizmoMode === 'translate' ? 'toggled' : ''}
             onClick={() => setGizmoMode('translate')}
-            title="Move (W)"
+            title="Move (M)"
           >
-            Move
+            <Label text="Move" at={0} />
           </button>
           <button
             type="button"
             className={gizmoMode === 'rotate' ? 'toggled' : ''}
             onClick={() => setGizmoMode('rotate')}
-            title="Rotate (E)"
+            title="Rotate (R)"
           >
-            Rotate
+            <Label text="Rotate" at={0} />
           </button>
         </div>
         <div className="group" role="group" aria-label="Drag plane">
@@ -467,6 +483,7 @@ export default function App() {
             title="Undo (Ctrl+Z)"
           >
             <UndoIcon />
+            <KeyHint k="^Z" />
           </button>
           <button type="button" onClick={cloneSelected} disabled={selectedShapes.length === 0} title="Clone (Ctrl+D)">
             Clone
@@ -480,20 +497,21 @@ export default function App() {
             title="Delete (Del)"
           >
             <TrashIcon />
+            <KeyHint k="Del" />
           </button>
         </div>
         <div className="group">
-          <button type="button" onClick={mergeSelected} disabled={selectedShapes.length < 2} title="Merge the selection into one object (Ctrl+G)">
-            Merge
+          <button type="button" onClick={mergeSelected} disabled={selectedShapes.length < 2} title="Merge the selection into one object (G)">
+            <Label text="Merge" at={3} />
           </button>
           <button
             type="button"
             className={selectedShapes.length > 0 && selectedShapes[selectedShapes.length - 1].hole ? 'toggled' : ''}
             onClick={toggleHoleSelected}
             disabled={selectedShapes.length === 0}
-            title="Hole: cuts the solids when merged"
+            title="Hole: cuts the solids when merged (H)"
           >
-            Hole
+            <Label text="Hole" at={0} />
           </button>
         </div>
         <div className="group">

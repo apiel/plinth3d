@@ -443,3 +443,18 @@ select {
   margin-top: 4px;
   color: var(--muted);
 }
+
+/* Keyboard shortcut badge on icon buttons. */
+.toolbar button {
+  position: relative;
+}
+
+.key-hint {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font-size: 8px;
+  line-height: 1;
+  color: var(--muted);
+  pointer-events: none;
+}

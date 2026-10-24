@@ -38,6 +38,21 @@ npm test         # run unit tests
 npm run build    # type-check and build to dist/
 ```
 
+## Keyboard shortcuts
+
+| Key | Action |
+| --- | --- |
+| B / C / S | Add a box / cylinder / sphere to the plan |
+| M / R | Move / rotate tool |
+| G | Merge the selection (Ctrl+G also works) |
+| H | Hole: toggle the selection as a hole |
+| Ctrl+D | Clone |
+| Ctrl+Z | Undo |
+| Del | Delete |
+| Esc | Clear the selection |
+
+The shortcut letter is underlined in each label, and icon buttons show it in the corner.
+
 ## Project file format
 
 Projects are plain JSON, so they are easy to diff and version-control:

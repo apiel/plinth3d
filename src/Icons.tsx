@@ -82,3 +82,23 @@ export function MoonIcon() {
     </Svg>
   );
 }
+
+/** A button label with its shortcut letter underlined, e.g. <Label text="Move" at={0} /> shows Move with M underlined. */
+export function Label({ text, at }: { text: string; at: number }) {
+  return (
+    <>
+      {text.slice(0, at)}
+      <u>{text[at]}</u>
+      {text.slice(at + 1)}
+    </>
+  );
+}
+
+/** A tiny shortcut badge in the corner of an icon button. */
+export function KeyHint({ k }: { k: string }) {
+  return (
+    <span className="key-hint" aria-hidden="true">
+      {k}
+    </span>
+  );
+}
