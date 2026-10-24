@@ -12,11 +12,13 @@ interface LayerPanelProps {
   onToggle: (layerId: string, key: 'visible' | 'locked') => void;
   onDelete: (layerId: string) => void;
   onSelect: (shapeId: string, additive: boolean) => void;
+  onRenameShape: (shapeId: string, name: string) => void;
 }
 
 /** Photoshop-style layer list. Each layer lists the shapes it contains. */
 export function LayerPanel(props: LayerPanelProps) {
   const [editing, setEditing] = useState<string | null>(null);
+  const [editingShape, setEditingShape] = useState<string | null>(null);
 
   // Newest layers appear at the top, as in Photoshop.
   const ordered = [...props.layers].reverse();
@@ -108,7 +110,33 @@ export function LayerPanel(props: LayerPanelProps) {
                       onClick={(e) => props.onSelect(shape.id, e.shiftKey)}
                     >
                       <span className="swatch" style={{ background: shape.hole ? '#ff4d4d' : shape.color }} />
-                      <span className="shape-name">{shape.name}</span>
+                      {editingShape === shape.id ? (
+                        <input
+                          className="layer-name-input"
+                          autoFocus
+                          defaultValue={shape.name}
+                          onClick={(e) => e.stopPropagation()}
+                          onBlur={(e) => {
+                            props.onRenameShape(shape.id, e.currentTarget.value.trim() || shape.name);
+                            setEditingShape(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') e.currentTarget.blur();
+                            if (e.key === 'Escape') setEditingShape(null);
+                          }}
+                        />
+                      ) : (
+                        <span
+                          className="shape-name"
+                          title="Double-click to rename"
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            setEditingShape(shape.id);
+                          }}
+                        >
+                          {shape.name}
+                        </span>
+                      )}
                       {shape.hole && <span className="badge">hole</span>}
                     </li>
                   ))}

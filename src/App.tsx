@@ -208,7 +208,9 @@ export default function App() {
       updateShape(shape.id, { position });
       return;
     }
-    updateShape(shape.id, resizeAlongAxis(shape, target.axis, target.sign, Math.max(0.1, value)));
+    const side = target.sides.find((s) => s.axis === index);
+    if (!side) return;
+    updateShape(shape.id, resizeAlongAxis(shape, side.axis, side.sign, Math.max(0.1, value)));
   };
 
   // Live updates during a drag. They change the project without adding undo steps.
@@ -546,6 +548,7 @@ export default function App() {
           onToggle={toggleLayer}
           onDelete={deleteLayer}
           onSelect={(id, additive) => selectShape(id, additive)}
+          onRenameShape={(id, name) => updateShape(id, { name })}
         />
       </aside>
 
@@ -564,6 +567,7 @@ export default function App() {
           dragPlane={dragPlane}
           onEditStart={startEdit}
           onReadoutEdit={editReadout}
+          onReadoutShow={setReadout}
           snap={snap}
           readout={readout}
           onShapeLive={shapeLive}

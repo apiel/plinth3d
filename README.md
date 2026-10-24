@@ -11,9 +11,10 @@ Shapes are combined with holes, and the result is exported as an STL file for yo
 - Move with the arrow gizmo, or drag a shape's body. The Drag in XY / XZ / YZ buttons choose the plane a body drag moves in. XZ (across the plan) is the default.
 - Step selector in the toolbar (Off, 0.1 to 10 mm) snaps moves, resizes and the arrows.
 - While moving or resizing, a readout card follows the cursor. A move shows only the moving axes, with the distance moved and the distance from the plan centre. Type into it for an exact value.
-- The face handle you press turns blue, and it lightens when hovered.
+- The edge you hover lightens, and the edge you press turns blue.
+- Rename a shape by double-clicking its name in the layer list, or in the Name field of the Properties panel.
 - Rotate with the rotate gizmo.
-- Resize by dragging a white face handle of the selected shape. The opposite face stays in place. Each drag is one undo step.
+- Resize by dragging an edge of the dashed box around the selected shape. The edge changes one dimension at a time. Click the edge to switch between its two axes; the readout shows the one that is active. The opposite face stays in place. Each drag is one undo step.
 - Light and dark themes, from the toolbar. Your choice is remembered.
 - Holes: a shape marked as a hole is subtracted from all solids on visible layers.
 - Layers, like Photoshop: show/hide, lock, rename, create and delete. Each shape belongs to one layer.

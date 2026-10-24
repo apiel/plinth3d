@@ -12,7 +12,6 @@ import {
   Group,
   MOUSE,
   type Intersection,
-  LineBasicMaterial,
   LineDashedMaterial,
   LineSegments,
   Material,
@@ -42,13 +41,12 @@ const AXIS_NAMES = ['Width', 'Height', 'Depth'];
 const AXIS_LABELS = ['X', 'Y', 'Z'];
 const PLANE_AXES: Record<DragPlane, number[]> = { XY: [0, 1], XZ: [0, 2], YZ: [1, 2] };
 const GIZMO_AXES: Record<string, number[]> = { X: [0], Y: [1], Z: [2], XY: [0, 1], XZ: [0, 2], YZ: [1, 2], XYZ: [0, 1, 2] };
-const HANDLE_COLOR = '#ffffff';
 const CARD_OFFSET = 18;
 const HANDLE_HOVER_COLOR = '#9cc2ff';
 const HANDLE_ACTIVE_COLOR = '#2f6bff';
 const DRAG_THRESHOLD = 3;
-/** Handle size as a fraction of the camera distance, so handles look the same size on screen. */
-const HANDLE_SCREEN_SCALE = 0.016;
+/** Width of an edge grab as a fraction of the camera distance, so it is easy to hit on screen. */
+const EDGE_SCREEN_SCALE = 0.012;
 
 export type Theme = 'dark' | 'light';
 
@@ -71,7 +69,7 @@ export type GizmoMode = 'translate' | 'rotate';
 /** A move or resize that the readout card shows and can edit. */
 export type ReadoutTarget =
   | { id: string; kind: 'move'; axes: number[]; start: Vec3 }
-  | { id: string; kind: 'resize'; axis: number; sign: number };
+  | { id: string; kind: 'resize'; sides: { axis: number; sign: number }[] };
 
 interface ViewportProps {
   engine: ManifoldToplevel | null;
@@ -91,6 +89,8 @@ interface ViewportProps {
   onEditStart: (target: ReadoutTarget | null) => void;
   /** Called when a value is typed into the readout card. */
   onReadoutEdit: (target: ReadoutTarget, index: number, value: number) => void;
+  /** Shows the readout for a target without adding an undo step. */
+  onReadoutShow: (target: ReadoutTarget) => void;
   /** Called on every step of a drag. Does not add undo steps. */
   onShapeLive: (id: string, patch: Partial<Shape>) => void;
 }
@@ -104,12 +104,14 @@ type Drag = {
   | {
       kind: 'resize';
       id: string;
-      dir: Vector3;
       plane: Plane;
-      origin: Vector3;
-      axis: number;
-      sign: number;
-      startAlong: number;
+      startHit: Vector3;
+      // The two faces this edge moves: each with its sign and its world direction.
+      // The edge's two faces, and the one a drag moves. A plain click switches to the other face.
+      sides: { axis: number; sign: number }[];
+      activeIndex: number;
+      edgeKey: string;
+      faces: { axis: number; sign: number; dir: Vector3 }[];
       startShape: Shape;
     }
 );
@@ -212,6 +214,8 @@ export function Viewport(props: ViewportProps) {
       });
     });
 
+    scene.add(transform);
+
     // The coloured plane squares of the move gizmo are removed, with their pickers.
     // Dragging the shape's body moves it in a plane instead (see the drag plane buttons).
     const planeSquares: Object3D[] = [];
@@ -275,9 +279,11 @@ export function Viewport(props: ViewportProps) {
 
     renderer.setAnimationLoop(() => {
       orbit.update();
-      // Keep the face handles a constant size on screen, however far the camera is.
-      for (const handle of sceneRef.current?.handles ?? []) {
-        handle.scale.setScalar(handle.getWorldPosition(scratch).distanceTo(camera.position) * HANDLE_SCREEN_SCALE);
+      // Keep the edge grabs a constant width on screen, however far the camera is.
+      for (const edge of sceneRef.current?.handles ?? []) {
+        const width = edge.getWorldPosition(scratch).distanceTo(camera.position) * EDGE_SCREEN_SCALE;
+        const along = edge.userData.edgeAlong as number;
+        for (let axis = 0; axis < 3; axis++) if (axis !== along) edge.scale.setComponent(axis, width);
       }
       placeReadout();
       renderer.render(scene, camera);
@@ -289,6 +295,8 @@ export function Viewport(props: ViewportProps) {
     let pressAt: { x: number; y: number } | null = null;
     let pressedShape: string | null = null;
     let drag: Drag | null = null;
+    // Which of the two faces each edge drags, switched by clicking the edge.
+    const edgeChoice = new Map<string, number>();
 
     const aim = (event: PointerEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -310,41 +318,50 @@ export function Viewport(props: ViewportProps) {
     const shapeById = (id: string) => handlersRef.current.shapes.find((s) => s.id === id);
     const isLocked = (shape: Shape) => handlersRef.current.layers.find((l) => l.id === shape.layerId)?.locked ?? false;
 
-    // Dragging a face handle stretches the shape along that axis, keeping the opposite face still.
-    const startResize = (handle: Intersection) => {
-      const { handleAxis: axis, handleSign: sign } = handle.object.userData as { handleAxis: number; handleSign: number };
-      const group = handle.object.parent as Group;
+    // Dragging an edge stretches the shape along one of the two axes that edge moves.
+    // Each click on the edge switches to the other axis. The opposite faces stay where they are.
+    const startResize = (edge: Intersection) => {
+      const sides = edge.object.userData.sides as { axis: number; sign: number }[];
+      const along = edge.object.userData.edgeAlong as number;
+      const group = edge.object.parent as Group;
       const id = group.userData.shapeId as string;
       const shape = shapeById(id);
       if (!shape) return;
 
-      const dir = new Vector3().setComponent(axis, 1).applyQuaternion(group.quaternion);
-      // A plane that contains the axis and faces the camera, so the mouse drives the axis.
+      const axisDir = new Vector3().setComponent(along, 1).applyQuaternion(group.quaternion);
+      // A plane through the edge that faces the camera, so the mouse moves the edge.
       const cameraDir = camera.getWorldDirection(new Vector3());
-      const normal = cameraDir.clone().sub(dir.clone().multiplyScalar(cameraDir.dot(dir)));
-      if (normal.lengthSq() < 1e-6) normal.set(dir.y > 0.9 ? 1 : 0, dir.y > 0.9 ? 0 : 1, 0);
-      const origin = handle.object.getWorldPosition(new Vector3());
+      const normal = cameraDir.clone().sub(axisDir.clone().multiplyScalar(cameraDir.dot(axisDir)));
+      if (normal.lengthSq() < 1e-6) normal.set(axisDir.y > 0.9 ? 1 : 0, axisDir.y > 0.9 ? 0 : 1, 0);
+      const origin = edge.object.getWorldPosition(new Vector3());
       const plane = new Plane().setFromNormalAndCoplanarPoint(normal.normalize(), origin);
 
-      const hitAtStart = new Vector3();
-      if (!raycaster.ray.intersectPlane(plane, hitAtStart)) return;
+      const startHit = new Vector3();
+      if (!raycaster.ray.intersectPlane(plane, startHit)) return;
+      const edgeKey = `${id}|${edge.object.userData.key as string}`;
+      const activeIndex = edgeChoice.get(edgeKey) ?? 0;
+      const faceOf = (i: number) => ({
+        axis: sides[i].axis,
+        sign: sides[i].sign,
+        dir: new Vector3().setComponent(sides[i].axis, 1).applyQuaternion(group.quaternion),
+      });
       drag = {
         kind: 'resize',
         moved: false,
         id,
-        dir,
         plane,
-        origin,
-        axis,
-        sign,
-        startAlong: hitAtStart.sub(origin).dot(dir),
+        startHit,
+        sides,
+        activeIndex,
+        edgeKey,
+        faces: [faceOf(activeIndex)],
         startShape: shape,
-        target: { id, kind: 'resize', axis, sign },
+        target: { id, kind: 'resize', sides: [sides[activeIndex]] },
       };
       orbit.enabled = false;
       const view = sceneRef.current;
       if (view) {
-        view.activeHandle = `${axis}:${sign}`;
+        view.activeHandle = edge.object.userData.key as string;
         paintHandles(view);
       }
     };
@@ -442,14 +459,24 @@ export function Viewport(props: ViewportProps) {
         return;
       }
 
-      const along = hit.sub(drag.origin).dot(drag.dir) - drag.startAlong;
-      const extent = Math.max(MIN_SIZE, snapTo(drag.startShape.size[drag.axis] + drag.sign * along, handlersRef.current.snap));
-      const { size, position } = resizeAlongAxis(drag.startShape, drag.axis, drag.sign, extent);
-      handlersRef.current.onShapeLive(drag.id, { size, position });
+      const delta = hit.sub(drag.startHit);
+      let shape = drag.startShape;
+      for (const face of drag.faces) {
+        const growth = face.sign * delta.dot(face.dir);
+        const extent = Math.max(MIN_SIZE, snapTo(drag.startShape.size[face.axis] + growth, handlersRef.current.snap));
+        shape = { ...shape, ...resizeAlongAxis(shape, face.axis, face.sign, extent) };
+      }
+      handlersRef.current.onShapeLive(drag.id, { size: shape.size, position: shape.position });
     };
 
     const onUp = (event: PointerEvent) => {
       if (drag) {
+        // A click on an edge (no drag) switches it to its other axis and shows that value.
+        if (drag.kind === 'resize' && !drag.moved) {
+          const next = 1 - drag.activeIndex;
+          edgeChoice.set(drag.edgeKey, next);
+          handlersRef.current.onReadoutShow({ id: drag.id, kind: 'resize', sides: [drag.sides[next]] });
+        }
         drag = null;
         if (sceneRef.current) {
           sceneRef.current.activeHandle = null;
@@ -547,7 +574,7 @@ export function Viewport(props: ViewportProps) {
         // Handles resize one shape, so they only show when a single shape is selected.
         if (!multi) {
           transform.attach(group);
-          for (const handle of makeHandles(shape.size, THEMES[theme].outline)) {
+          for (const handle of makeEdges(shape.size)) {
             group.add(handle);
             view.handles.push(handle);
           }
@@ -623,12 +650,16 @@ function ReadoutFields({
     return (
       <div className="readout-body">
         <span className="readout-title">Size (mm)</span>
-        <AxisInput
-          label={AXIS_NAMES[target.axis]}
-          value={shape.size[target.axis]}
-          step={step}
-          onChange={(value) => onEdit(target, target.axis, value)}
-        />
+        {target.sides.map((side) => (
+          <div className="readout-row" key={side.axis}>
+            <AxisInput
+              label={AXIS_NAMES[side.axis]}
+              value={shape.size[side.axis]}
+              step={step}
+              onChange={(value) => onEdit(target, side.axis, value)}
+            />
+          </div>
+        ))}
       </div>
     );
   }
@@ -696,37 +727,48 @@ function boundingBox(size: Vec3, color: string): LineSegments {
   return line;
 }
 
-/** Six square handles, one per face, in the shape's own frame. Each is 1 unit wide and scaled per frame. */
-function makeHandles(size: Vec3, outlineColor: string): Mesh[] {
-  const handles: Mesh[] = [];
-  for (let axis = 0; axis < 3; axis++) {
-    for (const sign of [-1, 1]) {
-      const box = new BoxGeometry(1, 1, 1);
-      const mesh = new Mesh(box, new MeshBasicMaterial({ color: HANDLE_COLOR, depthTest: false }));
-      mesh.position.setComponent(axis, (sign * size[axis]) / 2);
-      mesh.renderOrder = 10;
-      mesh.userData.handleAxis = axis;
-      mesh.userData.handleSign = sign;
-      mesh.userData.key = `${axis}:${sign}`;
-
-      const edges = new LineSegments(
-        new EdgesGeometry(box),
-        new LineBasicMaterial({ color: outlineColor, depthTest: false }),
-      );
-      edges.renderOrder = 11;
-      mesh.add(edges);
-      handles.push(mesh);
+/**
+ * The twelve edges of the dashed box, as invisible grabs. Hovering or pressing one lights it up.
+ * Each edge runs along one axis and moves the two faces that meet on it.
+ */
+function makeEdges(size: Vec3): Mesh[] {
+  const edges: Mesh[] = [];
+  for (let along = 0; along < 3; along++) {
+    const [a, b] = [0, 1, 2].filter((axis) => axis !== along);
+    for (const signA of [-1, 1]) {
+      for (const signB of [-1, 1]) {
+        const material = new MeshBasicMaterial({
+          color: HANDLE_HOVER_COLOR,
+          transparent: true,
+          opacity: 0,
+          depthTest: false,
+          depthWrite: false,
+        });
+        const mesh = new Mesh(new BoxGeometry(1, 1, 1), material);
+        mesh.position.setComponent(a, (signA * size[a]) / 2);
+        mesh.position.setComponent(b, (signB * size[b]) / 2);
+        mesh.scale.setComponent(along, size[along]);
+        mesh.renderOrder = 10;
+        mesh.userData.edgeAlong = along;
+        mesh.userData.sides = [
+          { axis: a, sign: signA },
+          { axis: b, sign: signB },
+        ];
+        mesh.userData.key = `${along}:${signA}:${signB}`;
+        edges.push(mesh);
+      }
     }
   }
-  return handles;
+  return edges;
 }
 
-/** Colours each face handle: blue while it is dragged, lighter when hovered. */
+/** Shows the hovered edge lightly, and the pressed edge strongly. */
 function paintHandles(view: { handles: Mesh[]; activeHandle: string | null; hoveredHandle: string | null }) {
-  for (const handle of view.handles) {
-    const key = handle.userData.key as string;
-    const color = key === view.activeHandle ? HANDLE_ACTIVE_COLOR : key === view.hoveredHandle ? HANDLE_HOVER_COLOR : HANDLE_COLOR;
-    (handle.material as MeshBasicMaterial).color.set(color);
+  for (const edge of view.handles) {
+    const key = edge.userData.key as string;
+    const material = edge.material as MeshBasicMaterial;
+    material.color.set(key === view.activeHandle ? HANDLE_ACTIVE_COLOR : HANDLE_HOVER_COLOR);
+    material.opacity = key === view.activeHandle ? 0.9 : key === view.hoveredHandle ? 0.5 : 0;
   }
 }
 
