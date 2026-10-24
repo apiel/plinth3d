@@ -8,7 +8,9 @@ Shapes are combined with holes, and the result is exported as an STL file for yo
 ## Features
 
 - Box, cylinder and sphere primitives. Click an icon in the toolbar to add one to the plan; it is selected straight away.
-- Move and rotate gizmos (snapping to 1 mm and 15°).
+- Move with the arrow gizmo, or drag a shape's body. The Drag in XY / XZ / YZ buttons choose the plane a body drag moves in. XZ (across the plan) is the default.
+- Rotate with the rotate gizmo.
+- Resize by dragging a white face handle of the selected shape. The opposite face stays in place. Each drag is one undo step.
 - Light and dark themes, from the toolbar. Your choice is remembered.
 - Holes: a shape marked as a hole is subtracted from all solids on visible layers.
 - Layers, like Photoshop: show/hide, lock, rename, create and delete. Each shape belongs to one layer.

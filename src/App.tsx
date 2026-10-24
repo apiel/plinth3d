@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ManifoldToplevel } from 'manifold-3d';
-import { Viewport, type GizmoMode, type Theme, type TransformChange } from './Viewport';
+import { Viewport, type DragPlane, type GizmoMode, type Theme, type TransformChange } from './Viewport';
 import { BoxIcon, CylinderIcon, MoonIcon, SphereIcon, SunIcon } from './Icons';
 import { LayerPanel } from './LayerPanel';
 import { Inspector } from './Inspector';
@@ -43,6 +43,12 @@ function downloadBlob(blob: Blob, filename: string) {
 
 const THEME_KEY = 'plinth3d:theme';
 
+const DRAG_PLANE_HINT: Record<DragPlane, string> = {
+  XY: 'Drag a shape in X and Y (front view)',
+  XZ: 'Drag a shape in X and Z (across the plan)',
+  YZ: 'Drag a shape in Y and Z (side view)',
+};
+
 function loadTheme(): Theme {
   try {
     const saved = localStorage.getItem(THEME_KEY);
@@ -74,6 +80,7 @@ export default function App() {
   const [engine, setEngine] = useState<ManifoldToplevel | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
+  const [dragPlane, setDragPlane] = useState<DragPlane>('XZ');
   const openInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -164,7 +171,20 @@ export default function App() {
     setShowResult(false);
   };
 
-    const toggleTheme = () => setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
+  // A move or resize drag is one undo step: the state before the drag is saved when it starts.
+  const startEdit = () => {
+    setHistory((past) => [...past.slice(-(HISTORY_LIMIT - 1)), project]);
+  };
+
+  // Live updates during a drag. They change the project without adding undo steps.
+  const shapeLive = (id: string, patch: Partial<Shape>) => {
+    setProject((current) => ({
+      ...current,
+      shapes: current.shapes.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+    }));
+  };
+
+  const toggleTheme = () => setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
 
   const duplicateSelected = () => {
     if (!selected || selectedLayerLocked) return;
@@ -317,6 +337,20 @@ export default function App() {
             Rotate
           </button>
         </div>
+        <div className="group" role="group" aria-label="Drag plane">
+          <span className="group-label">Drag in</span>
+          {(['XY', 'XZ', 'YZ'] as const).map((plane) => (
+            <button
+              key={plane}
+              type="button"
+              className={dragPlane === plane ? 'toggled' : ''}
+              onClick={() => setDragPlane(plane)}
+              title={DRAG_PLANE_HINT[plane]}
+            >
+              {plane}
+            </button>
+          ))}
+        </div>
         <div className="group">
           <button type="button" onClick={undo} disabled={history.length === 0} title="Undo (Ctrl+Z)">
             Undo
@@ -403,6 +437,9 @@ export default function App() {
             if (shape) setActiveLayerId(shape.layerId);
           }}
           onTransform={onTransform}
+          dragPlane={dragPlane}
+          onEditStart={startEdit}
+          onShapeLive={shapeLive}
         />
         <footer className="statusbar">
           <span>{status}</span>

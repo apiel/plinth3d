@@ -387,3 +387,9 @@ select {
   display: block;
 }
 
+
+.group-label {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+}
