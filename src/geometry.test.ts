@@ -169,7 +169,7 @@ describe('rounded edges', () => {
 
 
 describe('edge and corner meeting', () => {
-  it('gives the same result whether an edge is set to the corner radius or the corner takes over', async () => {
+  it('keeps each edge at its own radius, even next to a rounded corner', async () => {
     const wasm = await loadEngine();
     const make = (edgeRadius: number) => {
       const shape = createShape('box', createProject().layers[0].id, []);
@@ -182,9 +182,29 @@ describe('edge and corner meeting', () => {
     };
     const mismatched = make(4);
     const matched = make(6);
-    expect(Math.abs(mismatched.volume() - matched.volume())).toBeLessThan(1);
+    expect(Math.abs(mismatched.volume() - matched.volume())).toBeGreaterThan(1);
     mismatched.delete();
     matched.delete();
+  });
+
+  it('keeps a rounded corner the same shape whether or not an edge meets it', async () => {
+    const wasm = await loadEngine();
+    const make = (rounds: Shape['rounds']) => {
+      const shape = createShape('box', createProject().layers[0].id, []);
+      shape.size = [20, 20, 20];
+      shape.rounds = rounds;
+      return localPrimitive(wasm, shape);
+    };
+    const cornerOnly = make([{ edge: 'c:1:1:1', radius: 5 }]);
+    const withEdge = make([
+      { edge: '2:1:1', radius: 1 },
+      { edge: 'c:1:1:1', radius: 5 },
+    ]);
+    // The edge only takes more off, so the corner's own cut is still in the result.
+    expect(withEdge.volume()).toBeLessThan(cornerOnly.volume());
+    expect(withEdge.status()).toBe('NoError');
+    cornerOnly.delete();
+    withEdge.delete();
   });
 
   it('meets two rounded edges that share a corner in a mitre, not a bulge', async () => {

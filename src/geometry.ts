@@ -370,19 +370,6 @@ function roundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
   };
   const edgeRadiusRaw = (radius: number, a: number, b: number) =>
     Math.min(Math.max(radius, 0.1), Math.min(size[a], size[b]) / 2);
-  // An edge that meets a rounded corner takes that corner's radius, so the two surfaces meet
-  // exactly (a different radius leaves a step at the corner).
-  const edgeRadius = (radius: number, along: number, sa: number, sb: number, a: number, b: number) => {
-    const ends = [-1, 1].map((end) => {
-      const signs = [0, 0, 0] as Vec3;
-      signs[along] = end;
-      signs[a] = sa;
-      signs[b] = sb;
-      return cornerRadius(signs);
-    });
-    const cornered = ends.filter((r): r is number => r !== null);
-    return cornered.length > 0 ? Math.max(...cornered) : edgeRadiusRaw(radius, a, b);
-  };
 
   // Where an edge stops at one end: at the box face if the corner is square (it reaches out a
   // little, so the cut is clean), or where the corner's round begins.
@@ -415,7 +402,7 @@ function roundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
     } else {
       const [along, sa, sb] = edgeParts(edge);
       const [a, b] = others(along);
-      const r = edgeRadius(radius, along, sa, sb, a, b);
+      const r = edgeRadiusRaw(radius, a, b);
       // The cut is the corner zone minus the quarter-round, so it only removes material. Where two
       // rounded edges meet, the cuts add up and the two rounds meet in a mitre.
       const pos = edgeEnd(along, a, sa, b, sb, 1, true);
