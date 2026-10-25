@@ -6,8 +6,10 @@ import Module, { type Manifold, type ManifoldToplevel, type Mat4 } from 'manifol
 // Import the WASM file's URL explicitly. Without this, the dev server can serve
 // its HTML fallback instead, and the engine never loads.
 import manifoldWasmUrl from 'manifold-3d/manifold.wasm?url';
-import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
+import { Euler, Matrix4, MeshBasicMaterial, Quaternion, Vector3 } from 'three';
+import { MarchingCubes } from 'three/examples/jsm/objects/MarchingCubes.js';
 import { createId, type MeshGeometry, type Shape, type Vec3 } from './model';
+import { roundedBoxSdf } from './roundedSdf';
 
 const DEG_TO_RAD = Math.PI / 180;
 const CYLINDER_SEGMENTS = 64;
@@ -346,117 +348,91 @@ function mapShape(shape: Shape, frame: Frame): Shape {
   };
 }
 
+/** Blend radius where rounded edges and corners meet, in mm. */
+const SDF_BLEND = 1;
+/** Size of one voxel in the rounded box's grid, in mm. */
+const SDF_VOXEL = 0.15;
+/** Most cells across the rounded box's grid, to keep building it quick. */
+const SDF_MAX_CELLS = 260;
+
 /**
- * A box with some edges and corners rounded. An edge runs to the box's end when the corner there is
- * square, and stops where the corner's round begins when that corner is rounded. Each feature only
- * cuts material away, so rounds that meet at a sharp corner meet in a mitre. Sizes are in mm; the
- * box is centred on the origin.
+ * A box with some edges and corners rounded. The shape is a distance field (see roundedSdf.ts),
+ * turned into a mesh and then into a solid. Sizes are in mm; the box is centred on the origin.
+ */
+const ROUNDED_BOX_CACHE_SIZE = 6;
+const roundedBoxCache = new Map<string, Manifold>();
+
+/**
+ * A box with some edges and corners rounded. Building it is slow, and the viewport asks for every
+ * shape again each time the selection changes, so the solid is cached. The cache keeps its own copy,
+ * and the caller gets a copy it owns.
  */
 function roundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
-  const size = shape.size;
-  const half = size.map((v) => v / 2) as Vec3;
-  const rounds = shape.rounds ?? [];
-  const isCorner = (key: string) => key.startsWith('c:');
-  const cornerSigns = (key: string) => key.slice(2).split(':').map(Number) as Vec3;
-  const edgeParts = (key: string) => key.split(':').map(Number) as [number, number, number];
-  const others = (along: number): [number, number] => {
-    const [a, b] = [0, 1, 2].filter((axis) => axis !== along);
-    return [a, b];
-  };
-  const cornerRadius = (signs: Vec3): number | null => {
-    const key = `c:${signs.join(':')}`;
-    const found = rounds.find((r) => r.edge === key);
-    return found ? Math.min(Math.max(found.radius, 0.1), Math.min(...size) / 2) : null;
-  };
-  const edgeRadiusRaw = (radius: number, a: number, b: number) =>
-    Math.min(Math.max(radius, 0.1), Math.min(size[a], size[b]) / 2);
-
-  // Where an edge stops at one end: at the box face if the corner is square (it reaches out a
-  // little, so the cut is clean), or where the corner's round begins.
-  const edgeEnd = (along: number, a: number, sa: number, b: number, sb: number, end: number, cut: boolean) => {
-    const signs = [0, 0, 0] as Vec3;
-    signs[along] = end;
-    signs[a] = sa;
-    signs[b] = sb;
-    const rc = cornerRadius(signs);
-    if (rc === null) return end * (cut ? half[along] + 1 : half[along]);
-    return end * (half[along] - rc);
-  };
-
-  // Cut every rounded feature out of the box.
-  let body = wasm.Manifold.cube(size, true);
-  for (const { edge, radius } of rounds) {
-    let cutter: Manifold;
-    if (isCorner(edge)) {
-      // Each face keeps a quarter-round of radius r at the corner, and the corner itself is a
-      // sphere patch of radius sqrt(2) r centred on the inner corner. Edges stay sharp.
-      const signs = cornerSigns(edge);
-      const r = cornerRadius(signs) ?? 0.1;
-      const cell = boxAt(wasm, [r + 1, r + 1, r + 1], signs.map((sg, i) => sg * (half[i] - r / 2 + 0.5)) as Vec3);
-      const ball = wasm.Manifold.sphere(Math.SQRT2 * r, 48);
-      const placed = ball.translate(...(signs.map((sg, i) => sg * (half[i] - r)) as Vec3));
-      ball.delete();
-      cutter = cell.subtract(placed);
-      cell.delete();
-      placed.delete();
-    } else {
-      const [along, sa, sb] = edgeParts(edge);
-      const [a, b] = others(along);
-      const r = edgeRadiusRaw(radius, a, b);
-      // The cut is the corner zone minus the quarter-round, so it only removes material. Where two
-      // rounded edges meet, the cuts add up and the two rounds meet in a mitre.
-      const pos = edgeEnd(along, a, sa, b, sb, 1, true);
-      const neg = edgeEnd(along, a, sa, b, sb, -1, true);
-      const centre = (pos + neg) / 2;
-      const zone = boxAt(
-        wasm,
-        dimsOf(along, pos - neg, a, r + 1, b, r + 1),
-        centreOf(along, centre, a, sa * (half[a] - r / 2 + 0.5), b, sb * (half[b] - r / 2 + 0.5)),
-      );
-      const round = cylinderAlong(wasm, along, pos - neg, r, centreOf(along, centre, a, sa * (half[a] - r), b, sb * (half[b] - r)));
-      cutter = zone.subtract(round);
-      zone.delete();
-      round.delete();
-    }
-    const next = body.subtract(cutter);
-    body.delete();
-    cutter.delete();
-    body = next;
+  const key = JSON.stringify({ size: shape.size, rounds: shape.rounds ?? [] });
+  const cached = roundedBoxCache.get(key);
+  if (cached) {
+    // Most recently used goes last, so the oldest is evicted first.
+    roundedBoxCache.delete(key);
+    roundedBoxCache.set(key, cached);
+    return cached.translate(0, 0, 0);
   }
-  return body;
+  const built = buildRoundedBox(wasm, shape);
+  roundedBoxCache.set(key, built.translate(0, 0, 0));
+  if (roundedBoxCache.size > ROUNDED_BOX_CACHE_SIZE) {
+    const [oldest, manifold] = roundedBoxCache.entries().next().value as [string, Manifold];
+    manifold.delete();
+    roundedBoxCache.delete(oldest);
+  }
+  return built;
 }
 
-function dimsOf(along: number, length: number, a: number, extentA: number, b: number, extentB: number): Vec3 {
-  const dims: Vec3 = [0, 0, 0];
-  dims[along] = length;
-  dims[a] = extentA;
-  dims[b] = extentB;
-  return dims;
-}
-
-function centreOf(along: number, valueAlong: number, a: number, valueA: number, b: number, valueB: number): Vec3 {
-  const centre: Vec3 = [0, 0, 0];
-  centre[along] = valueAlong;
-  centre[a] = valueA;
-  centre[b] = valueB;
-  return centre;
-}
-
-function boxAt(wasm: ManifoldToplevel, dims: Vec3, centre: Vec3): Manifold {
-  const box = wasm.Manifold.cube(dims, true);
-  const placed = box.translate(centre[0], centre[1], centre[2]);
-  box.delete();
-  return placed;
-}
-
-/** A cylinder whose axis runs along the given axis (0 = X, 1 = Y, 2 = Z), centred at `centre`. */
-function cylinderAlong(wasm: ManifoldToplevel, along: number, length: number, radius: number, centre: Vec3): Manifold {
-  const lying = wasm.Manifold.cylinder(length, radius, radius, 32, true);
-  let turned = lying;
-  if (along === 0) turned = lying.transform(toMat4(new Matrix4().makeRotationY(Math.PI / 2)));
-  if (along === 1) turned = lying.transform(toMat4(new Matrix4().makeRotationX(Math.PI / 2)));
-  if (turned !== lying) lying.delete();
-  const placed = turned.translate(centre[0], centre[1], centre[2]);
-  turned.delete();
-  return placed;
+function buildRoundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
+  const half = Math.max(...shape.size) / 2;
+  // The grid spans [-reach, reach] on each axis, with a margin around the box.
+  const reach = half + 1;
+  const cells = Math.min(SDF_MAX_CELLS, Math.ceil((2 * reach) / SDF_VOXEL));
+  // The blend never exceeds half the smallest radius, so a small round is not blurred away.
+  const radii = (shape.rounds ?? []).map((r) => r.radius);
+  const blend = Math.min(SDF_BLEND, radii.length > 0 ? Math.min(...radii) / 2 : SDF_BLEND);
+  const distance = roundedBoxSdf(shape.size, shape.rounds ?? [], blend);
+  const mc = new MarchingCubes(cells, new MeshBasicMaterial(), false, false, cells * cells * 12);
+  mc.isolation = 0;
+  const mid = cells / 2;
+  for (let z = 0; z < cells; z++) {
+    for (let y = 0; y < cells; y++) {
+      for (let x = 0; x < cells; x++) {
+        // Inside is positive for the marching cubes, so the field is the negated distance.
+        mc.field[x + cells * y + cells * cells * z] = -distance(((x - mid) / mid) * reach, ((y - mid) / mid) * reach, ((z - mid) / mid) * reach);
+      }
+    }
+  }
+  mc.update();
+  const positions = mc.geometry.getAttribute('position').array as Float32Array;
+  const count = mc.geometry.drawRange.count;
+  // Marching cubes repeats each corner for every triangle, so join equal corners back together.
+  const ids = new Map<number, number>();
+  const vertices: number[] = [];
+  const triangles: number[] = [];
+  // Each coordinate, to a thousandth of a mm, packed into one number as a key.
+  const steps = Math.ceil(2 * reach * 1000) + 1;
+  for (let i = 0; i < count; i++) {
+    const x = positions[i * 3] * reach;
+    const y = positions[i * 3 + 1] * reach;
+    const z = positions[i * 3 + 2] * reach;
+    const key = (Math.round((x + reach) * 1000) * steps + Math.round((y + reach) * 1000)) * steps + Math.round((z + reach) * 1000);
+    let id = ids.get(key);
+    if (id === undefined) {
+      id = vertices.length / 3;
+      ids.set(key, id);
+      vertices.push(x, y, z);
+    }
+    triangles.push(id);
+  }
+  const kept: number[] = [];
+  for (let t = 0; t < triangles.length; t += 3) {
+    const [a, b, c] = [triangles[t], triangles[t + 1], triangles[t + 2]];
+    if (a !== b && b !== c && a !== c) kept.push(a, b, c);
+  }
+  mc.geometry.dispose();
+  return new wasm.Manifold(new wasm.Mesh({ numProp: 3, vertProperties: new Float32Array(vertices), triVerts: new Uint32Array(kept) }));
 }
