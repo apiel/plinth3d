@@ -187,24 +187,31 @@ describe('edge and corner meeting', () => {
     matched.delete();
   });
 
-  it('keeps a rounded corner the same shape whether or not an edge meets it', async () => {
+  it('runs a 3 mm edge at full depth into 5 mm corners, as one valid solid', async () => {
     const wasm = await loadEngine();
+    const corners = [-1, 1].flatMap((x) =>
+      [-1, 1].flatMap((y) => [-1, 1].map((z) => ({ edge: `c:${x}:${y}:${z}`, radius: 5 }))),
+    );
     const make = (rounds: Shape['rounds']) => {
       const shape = createShape('box', createProject().layers[0].id, []);
       shape.size = [20, 20, 20];
       shape.rounds = rounds;
       return localPrimitive(wasm, shape);
     };
-    const cornerOnly = make([{ edge: 'c:1:1:1', radius: 5 }]);
-    const withEdge = make([
-      { edge: '2:1:1', radius: 1 },
-      { edge: 'c:1:1:1', radius: 5 },
-    ]);
-    // The edge only takes more off, so the corner's own cut is still in the result.
-    expect(withEdge.volume()).toBeLessThan(cornerOnly.volume());
-    expect(withEdge.status()).toBe('NoError');
-    cornerOnly.delete();
-    withEdge.delete();
+    const edge = { edge: '0:1:1', radius: 3 };
+    const edgeOnly = make([edge]);
+    const cornersOnly = make(corners);
+    const both = make([...corners, edge]);
+    // The edge takes its full cut between the corners: nearly all of what it removes on its own
+    // (only the ends, where the corners already cut, overlap).
+    const edgeCut = 8000 - edgeOnly.volume();
+    const addedByEdge = cornersOnly.volume() - both.volume();
+    expect(addedByEdge).toBeGreaterThan(edgeCut * 0.6);
+    expect(addedByEdge).toBeLessThan(edgeCut * 1.05);
+    expect(both.status()).toBe('NoError');
+    edgeOnly.delete();
+    cornersOnly.delete();
+    both.delete();
   });
 
   it('meets two rounded edges that share a corner in a mitre, not a bulge', async () => {
