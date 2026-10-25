@@ -6,10 +6,10 @@ import Module, { type Manifold, type ManifoldToplevel, type Mat4 } from 'manifol
 // Import the WASM file's URL explicitly. Without this, the dev server can serve
 // its HTML fallback instead, and the engine never loads.
 import manifoldWasmUrl from 'manifold-3d/manifold.wasm?url';
-import { Euler, Matrix4, MeshBasicMaterial, Quaternion, Vector3 } from 'three';
-import { MarchingCubes } from 'three/examples/jsm/objects/MarchingCubes.js';
+import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { createId, type MeshGeometry, type Shape, type Vec3 } from './model';
 import { roundedBoxSdf } from './roundedSdf';
+import { polygonizeNearSurface } from './sparseMarching';
 
 const DEG_TO_RAD = Math.PI / 180;
 const CYLINDER_SEGMENTS = 64;
@@ -351,9 +351,9 @@ function mapShape(shape: Shape, frame: Frame): Shape {
 /** Blend radius where rounded edges and corners meet, in mm. */
 const SDF_BLEND = 1;
 /** Size of one voxel in the rounded box's grid, in mm. */
-const SDF_VOXEL = 0.15;
+const SDF_VOXEL = 0.1;
 /** Most cells across the rounded box's grid, to keep building it quick. */
-const SDF_MAX_CELLS = 260;
+const SDF_MAX_CELLS = 300;
 
 /**
  * A box with some edges and corners rounded. The shape is a distance field (see roundedSdf.ts),
@@ -387,52 +387,19 @@ function roundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
 }
 
 function buildRoundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
-  const half = Math.max(...shape.size) / 2;
-  // The grid spans [-reach, reach] on each axis, with a margin around the box.
-  const reach = half + 1;
-  const cells = Math.min(SDF_MAX_CELLS, Math.ceil((2 * reach) / SDF_VOXEL));
   // The blend never exceeds half the smallest radius, so a small round is not blurred away.
   const radii = (shape.rounds ?? []).map((r) => r.radius);
   const blend = Math.min(SDF_BLEND, radii.length > 0 ? Math.min(...radii) / 2 : SDF_BLEND);
   const distance = roundedBoxSdf(shape.size, shape.rounds ?? [], blend);
-  const mc = new MarchingCubes(cells, new MeshBasicMaterial(), false, false, cells * cells * 12);
-  mc.isolation = 0;
-  const mid = cells / 2;
-  for (let z = 0; z < cells; z++) {
-    for (let y = 0; y < cells; y++) {
-      for (let x = 0; x < cells; x++) {
-        // Inside is positive for the marching cubes, so the field is the negated distance.
-        mc.field[x + cells * y + cells * cells * z] = -distance(((x - mid) / mid) * reach, ((y - mid) / mid) * reach, ((z - mid) / mid) * reach);
-      }
-    }
-  }
-  mc.update();
-  const positions = mc.geometry.getAttribute('position').array as Float32Array;
-  const count = mc.geometry.drawRange.count;
-  // Marching cubes repeats each corner for every triangle, so join equal corners back together.
-  const ids = new Map<number, number>();
-  const vertices: number[] = [];
-  const triangles: number[] = [];
-  // Each coordinate, to a thousandth of a mm, packed into one number as a key.
-  const steps = Math.ceil(2 * reach * 1000) + 1;
-  for (let i = 0; i < count; i++) {
-    const x = positions[i * 3] * reach;
-    const y = positions[i * 3 + 1] * reach;
-    const z = positions[i * 3 + 2] * reach;
-    const key = (Math.round((x + reach) * 1000) * steps + Math.round((y + reach) * 1000)) * steps + Math.round((z + reach) * 1000);
-    let id = ids.get(key);
-    if (id === undefined) {
-      id = vertices.length / 3;
-      ids.set(key, id);
-      vertices.push(x, y, z);
-    }
-    triangles.push(id);
-  }
-  const kept: number[] = [];
-  for (let t = 0; t < triangles.length; t += 3) {
-    const [a, b, c] = [triangles[t], triangles[t + 1], triangles[t + 2]];
-    if (a !== b && b !== c && a !== c) kept.push(a, b, c);
-  }
-  mc.geometry.dispose();
-  return new wasm.Manifold(new wasm.Mesh({ numProp: 3, vertProperties: new Float32Array(vertices), triVerts: new Uint32Array(kept) }));
+  // A margin around the box, so the grid always closes the surface.
+  const room = shape.size.map((v) => v / 2 + 1) as [number, number, number];
+  // A coarser grid for big boxes keeps the build quick.
+  const voxel = Math.max(SDF_VOXEL, (2 * Math.max(...room)) / SDF_MAX_CELLS);
+  const { vertices, triangles } = polygonizeNearSurface(distance, room, voxel);
+  const mesh = new wasm.Manifold(new wasm.Mesh({ numProp: 3, vertProperties: vertices, triVerts: triangles }));
+  // The grid cuts flat faces into tiny triangles. Merge them back, moving the surface by under a
+  // quarter of a voxel.
+  const simple = mesh.simplify(voxel / 4);
+  mesh.delete();
+  return simple;
 }

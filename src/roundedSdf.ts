@@ -72,6 +72,8 @@ export function roundedBoxSdf(size: Vec3, rounds: Round[], blend: number): (x: n
     for (const e of edges) {
       const u = e.sa * p[e.a] - (half[e.a] - e.r);
       const v = e.sb * p[e.b] - (half[e.b] - e.r);
+      // Well outside the edge's corner square the term is far inside the solid and changes nothing.
+      if (u < -k || v < -k) continue;
       // Inside the edge's corner square, outside its round: removed.
       const kept = smin(Math.min(u, v), Math.sqrt(u * u + v * v) - e.r, k);
       d = smax(d, kept, k);
@@ -80,6 +82,8 @@ export function roundedBoxSdf(size: Vec3, rounds: Round[], blend: number): (x: n
       const u0 = c.sign[0] * x - c.core[0];
       const u1 = c.sign[1] * y - c.core[1];
       const u2 = c.sign[2] * z - c.core[2];
+      // Likewise well outside the corner's octant.
+      if (u0 < -k || u1 < -k || u2 < -k) continue;
       // Inside the corner's octant, outside its ball: removed.
       const inOctant = smin(smin(u0, u1, k), u2, k);
       const ball = Math.sqrt(u0 * u0 + u1 * u1 + u2 * u2) - c.reach;
