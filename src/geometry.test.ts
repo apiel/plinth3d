@@ -186,6 +186,22 @@ describe('edge and corner meeting', () => {
     mismatched.delete();
     matched.delete();
   });
+
+  it('meets two rounded edges that share a corner in a mitre, not a bulge', async () => {
+    const wasm = await loadEngine();
+    const shape = createShape('box', createProject().layers[0].id, []);
+    shape.size = [20, 20, 20];
+    // The edges along Z and along X, both at the top +X+Y+Z corner, with radius 5.
+    shape.rounds = [
+      { edge: '2:1:1', radius: 5 },
+      { edge: '0:1:1', radius: 5 },
+    ];
+    const rounded = localPrimitive(wasm, shape);
+    // Each edge removes the corner square minus its quarter-round; where they meet the removals overlap.
+    // The ideal volume of the mitred result is about 7797.5 mm³.
+    expect(Math.abs(rounded.volume() - 7797.5) / 7797.5).toBeLessThan(0.005);
+    rounded.delete();
+  });
 });
 
 describe('rounded corner alone', () => {

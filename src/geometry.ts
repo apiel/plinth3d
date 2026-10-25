@@ -348,9 +348,9 @@ function mapShape(shape: Shape, frame: Frame): Shape {
 
 /**
  * A box with some edges and corners rounded. An edge runs to the box's end when the corner there is
- * square, and stops where the corner's round begins when that corner is rounded. Two phases, so no
- * rounding undoes another: first every rounded feature is cut out of the box; then each feature's
- * rounded surface is put back. Sizes are in mm; the box is centred on the origin.
+ * square, and stops where the corner's round begins when that corner is rounded. Each feature only
+ * cuts material away, so rounds that meet at a sharp corner meet in a mitre. Sizes are in mm; the
+ * box is centred on the origin.
  */
 function roundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
   const size = shape.size;
@@ -396,7 +396,7 @@ function roundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
     return end * (half[along] - rc);
   };
 
-  // Phase 1: cut every rounded feature out of the box.
+  // Cut every rounded feature out of the box.
   let body = wasm.Manifold.cube(size, true);
   for (const { edge, radius } of rounds) {
     let cutter: Manifold;
@@ -416,44 +416,27 @@ function roundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
       const [along, sa, sb] = edgeParts(edge);
       const [a, b] = others(along);
       const r = edgeRadius(radius, along, sa, sb, a, b);
+      // The cut is the corner zone minus the quarter-round, so it only removes material. Where two
+      // rounded edges meet, the cuts add up and the two rounds meet in a mitre.
       const pos = edgeEnd(along, a, sa, b, sb, 1, true);
       const neg = edgeEnd(along, a, sa, b, sb, -1, true);
-      cutter = boxAt(
+      const centre = (pos + neg) / 2;
+      const zone = boxAt(
         wasm,
         dimsOf(along, pos - neg, a, r + 1, b, r + 1),
-        centreOf(along, (pos + neg) / 2, a, sa * (half[a] - r / 2 + 0.5), b, sb * (half[b] - r / 2 + 0.5)),
+        centreOf(along, centre, a, sa * (half[a] - r / 2 + 0.5), b, sb * (half[b] - r / 2 + 0.5)),
       );
+      const round = cylinderAlong(wasm, along, pos - neg, r, centreOf(along, centre, a, sa * (half[a] - r), b, sb * (half[b] - r)));
+      cutter = zone.subtract(round);
+      zone.delete();
+      round.delete();
     }
     const next = body.subtract(cutter);
     body.delete();
     cutter.delete();
     body = next;
   }
-
-  // Phase 2: put each rounded edge's surface back. Corners were shaped in phase 1.
-  const pieces: Manifold[] = [];
-  for (const { edge, radius } of rounds) {
-    if (isCorner(edge)) continue;
-    const [along, sa, sb] = edgeParts(edge);
-    const [a, b] = others(along);
-    const r = edgeRadius(radius, along, sa, sb, a, b);
-    const pos = edgeEnd(along, a, sa, b, sb, 1, false);
-    const neg = edgeEnd(along, a, sa, b, sb, -1, false);
-    const cylinder = cylinderAlong(
-      wasm,
-      along,
-      pos - neg,
-      r,
-      centreOf(along, (pos + neg) / 2, a, sa * (half[a] - r), b, sb * (half[b] - r)),
-    );
-    pieces.push(cylinder);
-  }
-
-  if (pieces.length === 0) return body;
-  const all = [body, ...pieces];
-  const result = wasm.Manifold.union(all);
-  all.forEach((m) => m.delete());
-  return result;
+  return body;
 }
 
 function dimsOf(along: number, length: number, a: number, extentA: number, b: number, extentB: number): Vec3 {
