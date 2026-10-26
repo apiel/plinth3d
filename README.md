@@ -27,7 +27,7 @@ Mark a shape as a hole, select it together with a solid, and press **Merge** (`G
 
 ### Round or chamfer corners and edges
 
-Select a box or cylinder and use **Corners and edges** in the properties panel: pick rounded or chamfered, then type a size for the vertical corners (boxes), the top edge and the bottom edge. Zero is square.
+Select a box or cylinder and use **Corners and edges** in the properties panel: each line (vertical corners for boxes, top edge, bottom edge) has an icon that switches between rounded and chamfered, and a size in mm. Zero is square.
 
 ### Light and dark
 
@@ -111,7 +111,7 @@ Projects are plain JSON, so they are easy to diff and version-control:
       "id": "...", "name": "Box 1", "type": "box", "layerId": "...",
       "position": [0, 10, 0], "rotation": [0, 0, 0], "size": [20, 20, 20],
       "color": "#4f8cff", "hole": false,
-      "edges": { "style": "round", "vertical": 4, "top": 2, "bottom": 0 }
+      "edges": { "vertical": { "size": 4 }, "top": { "size": 2, "chamfer": true }, "bottom": { "size": 0 } }
     }
   ]
 }
@@ -119,7 +119,7 @@ Projects are plain JSON, so they are easy to diff and version-control:
 
 Units are millimetres. Rotations are degrees, applied in XYZ order. The app's Y axis is up.
 
-`edges` is optional and applies to boxes and cylinders. `style` is `round` or `chamfer`; the other three are sizes in mm (`vertical` is for boxes only).
+`edges` is optional and applies to boxes and cylinders. Each of `vertical` (boxes only), `top` and `bottom` has a `size` in mm and an optional `chamfer: true`.
 
 ## Roadmap
 

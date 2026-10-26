@@ -535,18 +535,29 @@ select {
   display: block;
 }
 
-/* Corners and edges section of the inspector. */
+/* Corners and edges section of the inspector: label, round/chamfer icon and size on one line. */
 .edges {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
-.edges .segmented {
-  display: flex;
+.edge-row {
+  display: grid;
+  grid-template-columns: 1fr 30px 70px;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
-.edges .segmented > button {
-  flex: 1;
+.edge-row .icon-button {
+  height: 30px;
+  padding: 3px;
+}
+
+.edge-row .icon-button svg {
+  width: 100%;
+  height: 100%;
 }
 
 /* Open / Save / Export sit at the top of the sidebar, out of the toolbar. */

@@ -107,7 +107,7 @@ export const EDGE_TYPES: Shape['type'][] = ['box', 'cylinder'];
 
 function hasEdges(shape: Shape): boolean {
   const e = shape.edges;
-  return !!e && EDGE_TYPES.includes(shape.type) && !isPartialSweep(shape) && e.vertical + e.top + e.bottom > 0;
+  return !!e && EDGE_TYPES.includes(shape.type) && !isPartialSweep(shape) && e.vertical.size + e.top.size + e.bottom.size > 0;
 }
 
 /** Shapes that are a profile turned around the Y axis can be built over part of the turn. */
@@ -434,9 +434,9 @@ function edgedSolid(wasm: ManifoldToplevel, shape: Shape, edges: NonNullable<Sha
   const [w, h, d] = shape.size;
   const isBox = shape.type === 'box';
   const maxR = Math.min(w, d) / 2;
-  const vertical = isBox ? Math.min(Math.max(edges.vertical, 0), maxR) : 0;
-  const top = Math.min(Math.max(edges.top, 0), maxR, h);
-  const bottom = Math.min(Math.max(edges.bottom, 0), maxR, h - top);
+  const vertical = isBox ? Math.min(Math.max(edges.vertical.size, 0), maxR) : 0;
+  const top = Math.min(Math.max(edges.top.size, 0), maxR, h);
+  const bottom = Math.min(Math.max(edges.bottom.size, 0), maxR, h - top);
 
   const outline = (inset: number): [number, number][] => {
     const rw = w / 2 - inset;
@@ -446,6 +446,20 @@ function edgedSolid(wasm: ManifoldToplevel, shape: Shape, edges: NonNullable<Sha
       const points = circle.toPolygons()[0] as [number, number][];
       circle.delete();
       return points;
+    }
+    if (edges.vertical.chamfer) {
+      // Each corner is cut flat; the cut shrinks as the outline moves in.
+      const cut = Math.max(vertical - inset * (2 - Math.SQRT2), 0);
+      const pts: [number, number][] = [];
+      for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
+        const x = sx * rw;
+        const z = sz * rd;
+        // Order the two cut points so the outline keeps its winding.
+        const a: [number, number] = [x, z - sz * cut];
+        const b: [number, number] = [x - sx * cut, z];
+        pts.push(...(sx * sz > 0 ? [a, b] : [b, a]));
+      }
+      return cut > 0 ? pts : [[rw, rd], [-rw, rd], [-rw, -rd], [rw, -rd]];
     }
     const corner = Math.max(vertical - inset, 0);
     const core = wasm.CrossSection.square([2 * (rw - corner), 2 * (rd - corner)], true);
@@ -460,7 +474,7 @@ function edgedSolid(wasm: ManifoldToplevel, shape: Shape, edges: NonNullable<Sha
   const add = (y: number, inset: number) => {
     for (const [x, z] of outline(Math.max(inset, 0))) points.push([x, y, z]);
   };
-  for (const { t, inset } of edgeSlices(edges.style, top)) add(h / 2 - t, inset);
-  for (const { t, inset } of edgeSlices(edges.style, bottom)) add(-h / 2 + t, inset);
+  for (const { t, inset } of edgeSlices(edges.top.chamfer ? 'chamfer' : 'round', top)) add(h / 2 - t, inset);
+  for (const { t, inset } of edgeSlices(edges.bottom.chamfer ? 'chamfer' : 'round', bottom)) add(-h / 2 + t, inset);
   return wasm.Manifold.hull(points);
 }

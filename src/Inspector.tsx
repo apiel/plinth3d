@@ -1,4 +1,5 @@
 import { EDGE_TYPES, SWEEP_TYPES } from './geometry';
+import { ChamferEdgeIcon, RoundEdgeIcon } from './Icons';
 import type { Layer, Shape, Vec3 } from './model';
 
 interface InspectorProps {
@@ -129,15 +130,17 @@ export function Inspector({
 }
 
 type Edges = NonNullable<Shape['edges']>;
+const NO_EDGES: Edges = { vertical: { size: 0 }, top: { size: 0 }, bottom: { size: 0 } };
 
-/** Rounded or chamfered corners and edges. Zero everywhere means plain. */
+/** Rounded or chamfered corners and edges: one line each, with an icon that switches round and chamfer. */
 function EdgesSection({ shape, onChange }: { shape: Shape; onChange: (id: string, patch: Partial<Shape>) => void }) {
-  const edges: Edges = shape.edges ?? { style: 'round', vertical: 0, top: 0, bottom: 0 };
-  const set = (patch: Partial<Edges>) => {
-    const next = { ...edges, ...patch };
-    onChange(shape.id, { edges: next.vertical + next.top + next.bottom > 0 ? next : undefined });
+  const edges = shape.edges ?? NO_EDGES;
+  const set = (key: keyof Edges, patch: Partial<Edges[keyof Edges]>) => {
+    const next = { ...edges, [key]: { ...edges[key], ...patch } };
+    const any = next.vertical.size + next.top.size + next.bottom.size > 0;
+    onChange(shape.id, { edges: any ? next : undefined });
   };
-  const fields: [keyof Omit<Edges, 'style'>, string][] = [
+  const fields: [keyof Edges, string][] = [
     ['vertical', 'Vertical corners'],
     ['top', 'Top edge'],
     ['bottom', 'Bottom edge'],
@@ -145,36 +148,37 @@ function EdgesSection({ shape, onChange }: { shape: Shape; onChange: (id: string
   return (
     <div className="edges">
       <span className="vector-label">Corners and edges</span>
-      <div className="segmented" role="group" aria-label="Edge style">
-        {(['round', 'chamfer'] as const).map((style) => (
-          <button
-            key={style}
-            type="button"
-            className={edges.style === style ? 'toggled' : ''}
-            onClick={() => set({ style })}
-          >
-            {style === 'round' ? 'Rounded' : 'Chamfered'}
-          </button>
-        ))}
-      </div>
       {fields
         .filter(([key]) => key !== 'vertical' || shape.type === 'box')
-        .map(([key, label]) => (
-          <label key={key} className="field">
-            <span>{label}</span>
-            <input
-              type="number"
-              min={0}
-              step={0.5}
-              value={round(edges[key])}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                if (e.target.value.trim() === '' || !Number.isFinite(value) || value < 0) return;
-                set({ [key]: value });
-              }}
-            />
-          </label>
-        ))}
+        .map(([key, label]) => {
+          const spec = edges[key];
+          return (
+            <div key={key} className="edge-row">
+              <span>{label}</span>
+              <button
+                type="button"
+                className="icon-button"
+                title={spec.chamfer ? 'Chamfered: click for rounded' : 'Rounded: click for chamfered'}
+                aria-label={`${label}: ${spec.chamfer ? 'chamfered' : 'rounded'}`}
+                onClick={() => set(key, { chamfer: !spec.chamfer })}
+              >
+                {spec.chamfer ? <ChamferEdgeIcon /> : <RoundEdgeIcon />}
+              </button>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                aria-label={`${label} size (mm)`}
+                value={round(spec.size)}
+                onChange={(e) => {
+                  const value = Number(e.target.value);
+                  if (e.target.value.trim() === '' || !Number.isFinite(value) || value < 0) return;
+                  set(key, { size: value });
+                }}
+              />
+            </div>
+          );
+        })}
     </div>
   );
 }

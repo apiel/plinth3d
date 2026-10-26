@@ -18,6 +18,22 @@ function Svg({ children }: { children: ReactNode }) {
   );
 }
 
+export function RoundEdgeIcon() {
+  return (
+    <Svg>
+      <path d="M5 19V13a8 8 0 0 1 8-8h6" />
+    </Svg>
+  );
+}
+
+export function ChamferEdgeIcon() {
+  return (
+    <Svg>
+      <path d="M5 19V11l6-6h8" />
+    </Svg>
+  );
+}
+
 export function BoxIcon() {
   return (
     <Svg>

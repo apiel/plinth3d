@@ -143,6 +143,11 @@ describe('primitives', () => {
 });
 
 describe('rounded edges', () => {
+  const spec = (vertical: number, top: number, bottom: number, chamfer = false): Shape['edges'] => ({
+    vertical: { size: vertical, chamfer },
+    top: { size: top, chamfer },
+    bottom: { size: bottom, chamfer },
+  });
   const boxWith = (edges: Shape['edges']) => {
     const shape = createShape('box', createProject().layers[0].id, []);
     shape.size = [20, 20, 20];
@@ -152,7 +157,7 @@ describe('rounded edges', () => {
 
   it('rounds the top edge by the quarter-rounds it removes', async () => {
     const wasm = await loadEngine();
-    const rounded = localPrimitive(wasm, boxWith({ style: 'round', vertical: 0, top: 5, bottom: 0 }));
+    const rounded = localPrimitive(wasm, boxWith(spec(0, 5, 0)));
     // The quarter-round removes 25 - pi * 25 / 4 mm2 of section, swept round a perimeter of about 72 mm (the centroid's).
     const removed = (25 - (Math.PI * 25) / 4) * 72;
     expect(Math.abs(rounded.volume() - (8000 - removed)) / removed).toBeLessThan(0.1);
@@ -161,7 +166,7 @@ describe('rounded edges', () => {
 
   it('chamfers the top and bottom edges', async () => {
     const wasm = await loadEngine();
-    const chamfered = localPrimitive(wasm, boxWith({ style: 'chamfer', vertical: 0, top: 2, bottom: 2 }));
+    const chamfered = localPrimitive(wasm, boxWith(spec(0, 2, 2, true)));
     // A frustum of 20 -> 16 over 2 mm, twice, around a 16 mm tall 20 x 20 block.
     const frustum = (2 / 3) * (400 + 256 + 20 * 16);
     expect(chamfered.volume()).toBeCloseTo(20 * 20 * 16 + 2 * frustum, 1);
@@ -170,7 +175,7 @@ describe('rounded edges', () => {
 
   it('rounds the vertical corners like a rounded rectangle', async () => {
     const wasm = await loadEngine();
-    const rounded = localPrimitive(wasm, boxWith({ style: 'round', vertical: 4, top: 0, bottom: 0 }));
+    const rounded = localPrimitive(wasm, boxWith(spec(4, 0, 0)));
     const area = 400 - 4 * (16 - 4 * Math.PI);
     expect(Math.abs(rounded.volume() - area * 20) / 8000).toBeLessThan(0.01);
     rounded.delete();
@@ -180,7 +185,7 @@ describe('rounded edges', () => {
     const wasm = await loadEngine();
     const shape = createShape('cylinder', createProject().layers[0].id, []);
     shape.size = [20, 30, 20];
-    shape.edges = { style: 'round', vertical: 0, top: 3, bottom: 0 };
+    shape.edges = spec(0, 3, 0);
     const rounded = localPrimitive(wasm, shape);
     const plain = Math.PI * 100 * 30;
     expect(rounded.volume()).toBeLessThan(plain);
@@ -188,9 +193,22 @@ describe('rounded edges', () => {
     rounded.delete();
   });
 
+  it('chamfers the vertical corners and rounds the top, each on its own', async () => {
+    const wasm = await loadEngine();
+    const shape = boxWith({ vertical: { size: 4, chamfer: true }, top: { size: 0 }, bottom: { size: 0 } });
+    const cut = localPrimitive(wasm, shape);
+    // Each corner loses a right triangle with legs of 4 mm.
+    expect(cut.volume()).toBeCloseTo((400 - 4 * 8) * 20, 1);
+    cut.delete();
+    shape.edges = { vertical: { size: 4, chamfer: true }, top: { size: 3 }, bottom: { size: 0 } };
+    const mixed = localPrimitive(wasm, shape);
+    expect(mixed.volume()).toBeLessThan((400 - 4 * 8) * 20);
+    mixed.delete();
+  });
+
   it('leaves a box alone when nothing is rounded', async () => {
     const wasm = await loadEngine();
-    const box = localPrimitive(wasm, boxWith({ style: 'round', vertical: 0, top: 0, bottom: 0 }));
+    const box = localPrimitive(wasm, boxWith(spec(0, 0, 0)));
     expect(box.volume()).toBeCloseTo(8000, 2);
     box.delete();
   });

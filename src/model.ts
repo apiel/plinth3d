@@ -11,6 +11,12 @@ export interface MeshGeometry {
   indices: number[];
 }
 
+/** One kind of edge: its size in mm, and whether it is cut flat instead of rounded. */
+export interface EdgeSpec {
+  size: number;
+  chamfer?: boolean;
+}
+
 export interface Layer {
   id: string;
   name: string;
@@ -40,8 +46,8 @@ export interface Shape {
   /** Merged shapes only: the shapes they were made from, and the point they were made around. */
   sources?: Shape[];
   sourcePosition?: Vec3;
-  /** Boxes and cylinders: rounded or chamfered corners and edges, in mm. Vertical corners are for boxes only. */
-  edges?: { style: 'round' | 'chamfer'; vertical: number; top: number; bottom: number };
+  /** Boxes and cylinders: rounded or chamfered corners and edges. Vertical corners are for boxes only. */
+  edges?: { vertical: EdgeSpec; top: EdgeSpec; bottom: EdgeSpec };
   /** Cylinders, cones and tori only: how much of the turn is built, in degrees. Missing means all 360. */
   sweep?: number;
 }
