@@ -46,6 +46,10 @@ const AXIS_LABELS = ['X', 'Y', 'Z'];
 const VIEW_KEY = 'plinth3d:view';
 
 const PLANE_AXES: Record<DragPlane, number[]> = { XY: [0, 1], XZ: [0, 2], YZ: [1, 2] };
+/** Degrees a rotation turns by: normally, with Shift, and with Ctrl. */
+const ROTATE_STEP = 1;
+const ROTATE_STEP_BIG = 15;
+const ROTATE_STEP_FINE = 0.1;
 const GIZMO_AXES: Record<string, number[]> = { X: [0], Y: [1], Z: [2], XY: [0, 1], XZ: [0, 2], YZ: [1, 2], XYZ: [0, 1, 2] };
 const CARD_OFFSET = 18;
 const HANDLE_HOVER_COLOR = '#9cc2ff';
@@ -79,6 +83,7 @@ export type GizmoMode = 'translate' | 'rotate';
 /** A move or resize that the readout card shows and can edit. */
 export type ReadoutTarget =
   | { id: string; kind: 'move'; axes: number[]; start: Vec3 }
+  | { id: string; kind: 'rotate'; axes: number[]; start: Vec3 }
   | { id: string; kind: 'resize'; sides: { axis: number; sign: number }[] };
 
 interface ViewportProps {
@@ -208,7 +213,15 @@ export function Viewport(props: ViewportProps) {
 
     const transform = new TransformControls(camera, renderer.domElement);
     transform.setTranslationSnap(1);
-    transform.setRotationSnap(15 * DEG_TO_RAD);
+    // Rotation turns 1 degree at a time. Shift takes big steps and Ctrl fine ones.
+    const setRotationStep = (event: { ctrlKey: boolean; metaKey?: boolean; shiftKey: boolean }) => {
+      const degrees = event.ctrlKey || event.metaKey ? ROTATE_STEP_FINE : event.shiftKey ? ROTATE_STEP_BIG : ROTATE_STEP;
+      transform.setRotationSnap(degrees * DEG_TO_RAD);
+    };
+    setRotationStep({ ctrlKey: false, shiftKey: false });
+    // Capture, so the step is set before the gizmo reads it.
+    renderer.domElement.addEventListener('pointerdown', setRotationStep, true);
+    renderer.domElement.addEventListener('pointermove', setRotationStep, true);
     // Where a gizmo drag started: the pivot (or the single shape) and every shape it moves.
     let gizmoStart: { origin: Vector3; members: { id: string; start: Vec3 }[]; multi: boolean } | null = null;
     transform.addEventListener('dragging-changed', (event) => {
@@ -231,13 +244,16 @@ export function Viewport(props: ViewportProps) {
       const primary = members[members.length - 1];
       if (!primary) return;
       gizmoStart = { origin: object.position.clone(), members, multi };
-      // The first step of the drag is one undo step. Rotation shows no readout.
-      const translating = transform.mode === 'translate';
-      handlersRef.current.onEditStart(
-        translating
-          ? { id: primary.id, kind: 'move', axes: GIZMO_AXES[transform.axis ?? 'XYZ'] ?? [0, 1, 2], start: primary.start }
-          : null,
-      );
+      // The first step of the drag is one undo step. The readout shows what is being moved or turned.
+      const axes = GIZMO_AXES[transform.axis ?? 'XYZ'] ?? [0, 1, 2];
+      if (transform.mode === 'translate') {
+        handlersRef.current.onEditStart({ id: primary.id, kind: 'move', axes, start: primary.start });
+      } else {
+        const turning = handlersRef.current.shapes.find((s) => s.id === primary.id);
+        handlersRef.current.onEditStart(
+          turning ? { id: primary.id, kind: 'rotate', axes, start: [...turning.rotation] as Vec3 } : null,
+        );
+      }
     });
     // Live: the shapes follow the gizmo while it is dragged.
     transform.addEventListener('objectChange', () => {
@@ -836,6 +852,25 @@ function ReadoutFields({
               step={step}
               onChange={(value) => onEdit(target, side.axis, value)}
             />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (target.kind === 'rotate') {
+    return (
+      <div className="readout-body">
+        <span className="readout-title">Rotate (°)</span>
+        {target.axes.map((i) => (
+          <div className="readout-row" key={i}>
+            <AxisInput
+              label={AXIS_LABELS[i]}
+              value={shape.rotation[i]}
+              step={1}
+              onChange={(value) => onEdit(target, i, value)}
+            />
+            <span className="readout-delta">turned {signed(shape.rotation[i] - target.start[i])}</span>
           </div>
         ))}
       </div>

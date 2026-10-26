@@ -45,7 +45,7 @@ Switch themes from the toolbar. Your choice is remembered.
 
 **Moving and resizing**
 - Move with the arrow gizmo, or drag a shape's body. The Drag in XY / XZ / YZ buttons choose the plane a body drag moves in. XZ (across the plan) is the default.
-- Rotate with the rotate gizmo.
+- Rotate with the rotate gizmo: 1° at a time, **Shift** for 15° steps, **Ctrl** for 0.1°. A card shows the angle while you turn.
 - Resize by dragging an edge of the dashed box around the selected shape. The edge changes one dimension at a time. Click the edge to switch between its two axes. The opposite face stays in place.
 - Step selector in the toolbar (Off, 0.1 to 10 mm) snaps moves, resizes and the arrows.
 - While moving or resizing, a readout card follows the cursor. Type into it for an exact value.

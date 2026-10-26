@@ -267,6 +267,12 @@ export default function App() {
   const editReadout = (target: ReadoutTarget, index: number, value: number) => {
     const shape = project.shapes.find((s) => s.id === target.id);
     if (!shape) return;
+    if (target.kind === 'rotate') {
+      const rotation = [...shape.rotation] as Vec3;
+      rotation[index] = value;
+      updateShape(shape.id, { rotation });
+      return;
+    }
     if (target.kind === 'move') {
       const position = [...shape.position] as Vec3;
       position[index] = value;
