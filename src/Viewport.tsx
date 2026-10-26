@@ -42,6 +42,8 @@ const RESULT_COLOR = '#c9d2e0';
 const MIN_SIZE = 0.1;
 const AXIS_NAMES = ['Width', 'Height', 'Depth'];
 const AXIS_LABELS = ['X', 'Y', 'Z'];
+const VIEW_KEY = 'plinth3d:view';
+
 const PLANE_AXES: Record<DragPlane, number[]> = { XY: [0, 1], XZ: [0, 2], YZ: [1, 2] };
 const GIZMO_AXES: Record<string, number[]> = { X: [0], Y: [1], Z: [2], XY: [0, 1], XZ: [0, 2], YZ: [1, 2], XYZ: [0, 1, 2] };
 const CARD_OFFSET = 18;
@@ -181,6 +183,35 @@ export function Viewport(props: ViewportProps) {
     orbit.enableDamping = true;
     // Middle and right buttons pan the view; the left button rotates it.
     orbit.mouseButtons = { LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.PAN, RIGHT: MOUSE.PAN };
+    // The view (camera position and orbit target) is kept across reloads.
+    try {
+      const saved = JSON.parse(localStorage.getItem(VIEW_KEY) ?? 'null');
+      if (Array.isArray(saved?.position) && Array.isArray(saved?.target) && [...saved.position, ...saved.target].every(Number.isFinite)) {
+        camera.position.fromArray(saved.position);
+        orbit.target.fromArray(saved.target);
+        orbit.update();
+      }
+    } catch {
+      // No saved view, or storage is unavailable: keep the default view.
+    }
+    const saveView = () => {
+      try {
+        localStorage.setItem(VIEW_KEY, JSON.stringify({ position: camera.position.toArray(), target: orbit.target.toArray() }));
+      } catch {
+        // Storage is full or blocked: the view is just not remembered.
+      }
+    };
+    // Damping keeps firing change events after a drag, so this throttles instead of
+    // debouncing, and the view is also saved when the page goes away.
+    let saveViewTimer: number | undefined;
+    orbit.addEventListener('change', () => {
+      if (saveViewTimer !== undefined) return;
+      saveViewTimer = window.setTimeout(() => {
+        saveViewTimer = undefined;
+        saveView();
+      }, 300);
+    });
+    window.addEventListener('pagehide', saveView);
 
     const transform = new TransformControls(camera, renderer.domElement);
     transform.setTranslationSnap(1);
@@ -744,6 +775,8 @@ export function Viewport(props: ViewportProps) {
 
     return () => {
       renderer.setAnimationLoop(null);
+      window.removeEventListener('pagehide', saveView);
+      window.clearTimeout(saveViewTimer);
       observer.disconnect();
       renderer.domElement.removeEventListener('pointerdown', onDown, true);
       renderer.domElement.removeEventListener('pointermove', onMove);
