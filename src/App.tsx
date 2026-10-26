@@ -59,6 +59,12 @@ function loadAutosave(): Project | null {
   }
 }
 
+/** A file name from the project name: no path characters, and a fallback when it is empty. */
+function fileBase(name: string | undefined, fallback: string): string {
+  const clean = (name ?? '').replace(/[\\/:*?"<>|]+/g, '-').trim();
+  return clean || fallback;
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -442,11 +448,11 @@ export default function App() {
       setNotice('Nothing to export. Add a solid shape to a visible layer.');
       return;
     }
-    downloadBlob(new Blob([encodeBinarySTL(mesh)], { type: 'model/stl' }), 'plinth3d-model.stl');
+    downloadBlob(new Blob([encodeBinarySTL(mesh)], { type: 'model/stl' }), `${fileBase(project.name, 'plinth3d-model')}.stl`);
   };
 
   const saveProject = () => {
-    downloadBlob(new Blob([serializeProject(project)], { type: 'application/json' }), 'plinth3d-project.json');
+    downloadBlob(new Blob([serializeProject(project)], { type: 'application/json' }), `${fileBase(project.name, 'plinth3d-project')}.json`);
   };
 
   const openProject = async (file: File) => {
@@ -715,6 +721,14 @@ export default function App() {
           <button type="button" className="primary" onClick={exportStl} disabled={!engine}>
             Export STL
           </button>
+          <input
+            type="text"
+            className="project-name"
+            value={project.name ?? ''}
+            onChange={(e) => setProject((current) => ({ ...current, name: e.target.value }))}
+            placeholder="File name (STL and project)"
+            aria-label="File name"
+          />
           <input
             ref={openInput}
             type="file"

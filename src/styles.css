@@ -574,9 +574,14 @@ select {
 /* Open / Save / Export sit at the top of the sidebar, out of the toolbar. */
 .project-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
+}
+
+.project-actions .project-name {
+  flex: 1 1 100%;
 }
 
 .project-actions button {

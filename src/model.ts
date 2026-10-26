@@ -45,6 +45,8 @@ export interface Shape {
 }
 
 export interface Project {
+  /** Names the exported STL and the saved project file. */
+  name?: string;
   layers: Layer[];
   shapes: Shape[];
 }
@@ -150,7 +152,7 @@ export function parseProject(text: string): Project {
       throw new Error(`Merged shape "${shape.name}" is missing its geometry.`);
     }
   }
-  return { layers, shapes: doc.shapes as Shape[] };
+  return { name: typeof doc.name === 'string' ? doc.name : undefined, layers, shapes: doc.shapes as Shape[] };
 }
 
 export const LAYER_FORMAT = 'plinth3d-layer';
