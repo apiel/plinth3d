@@ -1,3 +1,1 @@
-Need to optimize cube radius corner and edge, now its way to slow...
-
 For rotation, we need to be able to do big step rotation like thinkercad does, maybe using shift?

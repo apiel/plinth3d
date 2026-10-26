@@ -103,6 +103,8 @@ interface ViewportProps {
   onReadoutEdit: (target: ReadoutTarget, index: number, value: number) => void;
   /** Shows the readout for a target without adding an undo step. */
   onReadoutShow: (target: ReadoutTarget) => void;
+  /** Closes the readout, so a clicked face stops being lit. */
+  onReadoutClose: () => void;
   /** Shift + drag on empty space selects the shapes inside the rectangle. */
   onMarquee: (ids: string[]) => void;
   /** What Ctrl and Shift do to the snap step while dragging. */
@@ -481,6 +483,8 @@ export function Viewport(props: ViewportProps) {
         startResize(handle);
         return;
       }
+      // A press anywhere but on a face lets go of the clicked face.
+      if (handlersRef.current.readout?.kind === 'resize') handlersRef.current.onReadoutClose();
       // An arrow or plane of the move gizmo is under the pointer: TransformControls handles it.
       // Its centre handle sits on the shape itself, so a press there is a body drag instead.
       if (transform.axis !== null && transform.axis !== 'XYZ') return;

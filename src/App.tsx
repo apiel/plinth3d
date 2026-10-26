@@ -199,6 +199,7 @@ export default function App() {
 
   // Click a shape to select it. Shift adds or removes it from the selection.
   const selectShape = (id: string | null, additive: boolean) => {
+    setReadout((current) => (current?.kind === 'resize' && current.id === id ? current : null));
     if (id === null) {
       if (!additive) setSelection([]);
       return;
@@ -802,6 +803,7 @@ export default function App() {
           onEditStart={startEdit}
           onReadoutEdit={editReadout}
           onReadoutShow={setReadout}
+          onReadoutClose={() => setReadout(null)}
           snap={snap}
           viewDirRef={viewDir}
           readout={readout}
