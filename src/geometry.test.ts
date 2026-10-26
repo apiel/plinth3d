@@ -263,3 +263,45 @@ describe('sweep', () => {
     expect((await volumeOf('cylinder', 360)).volume).toBeCloseTo((await volumeOf('cylinder')).volume, 6);
   });
 });
+
+describe('edges on wedges, cones and pyramids', () => {
+  const edged = async (type: 'wedge' | 'cone' | 'pyramid', size: [number, number, number], edges: NonNullable<Shape['edges']>) => {
+    const wasm = await loadEngine();
+    const shape = createShape(type, createProject().layers[0].id, []);
+    shape.size = size;
+    const plain = localPrimitive(wasm, shape);
+    shape.edges = edges;
+    const cut = localPrimitive(wasm, shape);
+    const result = { plain: plain.volume(), cut: cut.volume(), box: cut.boundingBox() };
+    plain.delete();
+    cut.delete();
+    return result;
+  };
+  const none = { size: 0 };
+
+  it('rounds the corners of a wedge', async () => {
+    const { plain, cut } = await edged('wedge', [20, 20, 20], { vertical: { size: 3 }, top: none, bottom: none });
+    // The corners remove r^2 (cot(a/2) - (pi - a) / 2) from the triangle: 90 and two 45 degree corners, 20 mm long.
+    const removed = 9 * (1 - Math.PI / 4 + 2 * (1 / Math.tan(Math.PI / 8) - (3 * Math.PI) / 8)) * 20;
+    expect(Math.abs(cut - (plain - removed)) / plain).toBeLessThan(0.01);
+  });
+
+  it('chamfers the front and back of a wedge', async () => {
+    const { plain, cut, box } = await edged('wedge', [20, 20, 20], { vertical: none, top: { size: 2, chamfer: true }, bottom: { size: 2, chamfer: true } });
+    expect(cut).toBeLessThan(plain);
+    expect(box.max[2] - box.min[2]).toBeCloseTo(20, 2);
+  });
+
+  it('rounds the base edge of a cone and keeps its height', async () => {
+    const { plain, cut, box } = await edged('cone', [20, 30, 20], { vertical: none, top: none, bottom: { size: 3 } });
+    expect(cut).toBeLessThan(plain);
+    expect(cut).toBeGreaterThan(plain * 0.9);
+    expect(box.max[1] - box.min[1]).toBeCloseTo(30, 2);
+  });
+
+  it('chamfers the base edge of a pyramid', async () => {
+    const { plain, cut } = await edged('pyramid', [20, 30, 20], { vertical: none, top: none, bottom: { size: 3, chamfer: true } });
+    expect(cut).toBeLessThan(plain);
+    expect(cut).toBeGreaterThan(plain * 0.8);
+  });
+});

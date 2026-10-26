@@ -7,7 +7,7 @@ import Module, { type Manifold, type ManifoldToplevel, type Mat4 } from 'manifol
 // its HTML fallback instead, and the engine never loads.
 import manifoldWasmUrl from 'manifold-3d/manifold.wasm?url';
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
-import { createId, type MeshGeometry, type Shape, type Vec3 } from './model';
+import { createId, type EdgeSpec, type MeshGeometry, type Shape, type Vec3 } from './model';
 
 const DEG_TO_RAD = Math.PI / 180;
 const CYLINDER_SEGMENTS = 64;
@@ -102,8 +102,8 @@ export function localPrimitive(wasm: ManifoldToplevel, shape: Shape): Manifold {
   return sized;
 }
 
-/** Boxes and cylinders (whole ones) can have their edges rounded or chamfered. */
-export const EDGE_TYPES: Shape['type'][] = ['box', 'cylinder'];
+/** Shapes (whole ones) whose edges can be rounded or chamfered. */
+export const EDGE_TYPES: Shape['type'][] = ['box', 'cylinder', 'wedge', 'cone', 'pyramid'];
 
 function hasEdges(shape: Shape): boolean {
   const e = shape.edges;
@@ -425,56 +425,127 @@ function edgeSlices(style: 'round' | 'chamfer', r: number): { t: number; inset: 
   return slices;
 }
 
-/**
- * A box or cylinder with its vertical corners, top edge and bottom edge rounded or chamfered. The
- * solid is convex, so it is the hull of a handful of outlines stacked at different heights. Sizes
- * are in mm; the shape is centred on the origin, standing along Y.
- */
-function edgedSolid(wasm: ManifoldToplevel, shape: Shape, edges: NonNullable<Shape['edges']>): Manifold {
-  const [w, h, d] = shape.size;
-  const isBox = shape.type === 'box';
-  const maxR = Math.min(w, d) / 2;
-  const vertical = isBox ? Math.min(Math.max(edges.vertical.size, 0), maxR) : 0;
-  const top = Math.min(Math.max(edges.top.size, 0), maxR, h);
-  const bottom = Math.min(Math.max(edges.bottom.size, 0), maxR, h - top);
+type EdgeSet = NonNullable<Shape['edges']>;
+type Point2 = [number, number];
 
-  const outline = (inset: number): [number, number][] => {
-    const rw = w / 2 - inset;
-    const rd = d / 2 - inset;
-    if (!isBox) {
-      const circle = wasm.CrossSection.circle(1, CYLINDER_SEGMENTS).scale([rw, rd]);
-      const points = circle.toPolygons()[0] as [number, number][];
-      circle.delete();
-      return points;
-    }
-    if (edges.vertical.chamfer) {
-      // Each corner is cut flat; the cut shrinks as the outline moves in.
-      const cut = Math.max(vertical - inset * (2 - Math.SQRT2), 0);
-      const pts: [number, number][] = [];
-      for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
-        const x = sx * rw;
-        const z = sz * rd;
-        // Order the two cut points so the outline keeps its winding.
-        const a: [number, number] = [x, z - sz * cut];
-        const b: [number, number] = [x - sx * cut, z];
-        pts.push(...(sx * sz > 0 ? [a, b] : [b, a]));
-      }
-      return cut > 0 ? pts : [[rw, rd], [-rw, rd], [-rw, -rd], [rw, -rd]];
-    }
-    const corner = Math.max(vertical - inset, 0);
-    const core = wasm.CrossSection.square([2 * (rw - corner), 2 * (rd - corner)], true);
-    const grown = corner > 0 ? core.offset(corner, 'Round', 2, CYLINDER_SEGMENTS / 4) : core;
-    const points = grown.toPolygons()[0] as [number, number][];
-    if (grown !== core) grown.delete();
-    core.delete();
+/** The outline of a box or cylinder: `inset` mm in from the full outline, corners per `edges.vertical`. */
+function boxOutline(wasm: ManifoldToplevel, shape: Shape, edges: EdgeSet, vertical: number, inset: number): Point2[] {
+  const [w, , d] = shape.size;
+  const rw = w / 2 - inset;
+  const rd = d / 2 - inset;
+  if (shape.type !== 'box') {
+    const circle = wasm.CrossSection.circle(1, CYLINDER_SEGMENTS).scale([rw, rd]);
+    const points = circle.toPolygons()[0] as Point2[];
+    circle.delete();
     return points;
-  };
+  }
+  if (edges.vertical.chamfer) {
+    // Each corner is cut flat; the cut shrinks as the outline moves in.
+    const cut = Math.max(vertical - inset * (2 - Math.SQRT2), 0);
+    const pts: Point2[] = [];
+    for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
+      pts.push([sx * rw, sz * (rd - cut)], [sx * (rw - cut), sz * rd]);
+    }
+    return pts;
+  }
+  const corner = Math.max(vertical - inset, 0);
+  const core = wasm.CrossSection.square([2 * (rw - corner), 2 * (rd - corner)], true);
+  const grown = corner > 0 ? core.offset(corner, 'Round', 2, CYLINDER_SEGMENTS / 4) : core;
+  const points = grown.toPolygons()[0] as Point2[];
+  if (grown !== core) grown.delete();
+  core.delete();
+  return points;
+}
+
+/** The wedge's triangle, `inset` mm in from its sides, with its three corners rounded or chamfered. */
+function wedgeOutline(wasm: ManifoldToplevel, shape: Shape, edges: EdgeSet, corner: number, inset: number): Point2[] {
+  const [w, h] = shape.size;
+  const triangle = wasm.CrossSection.ofPolygons([[[-w / 2, -h / 2], [w / 2, -h / 2], [-w / 2, h / 2]]]);
+  const k = Math.max(corner - inset, 0);
+  const inner = triangle.offset(-(inset + k), 'Miter', 10, 0);
+  triangle.delete();
+  const grown = k > 0 ? inner.offset(k, edges.vertical.chamfer ? 'Square' : 'Round', 10, CYLINDER_SEGMENTS / 4) : inner;
+  const points = (grown.toPolygons()[0] ?? []) as Point2[];
+  if (grown !== inner) grown.delete();
+  inner.delete();
+  return points;
+}
+
+/**
+ * Boxes, cylinders and wedges with their corners and the edges of their two end faces rounded or
+ * chamfered. The solid is convex, so it is the hull of a handful of outlines stacked along the
+ * axis, each pulled in by how far the edge has curved away by then. Boxes and cylinders stand along
+ * Y (the faces are top and bottom); a wedge is a triangle along Z (the faces are front and back).
+ */
+function edgedPrism(wasm: ManifoldToplevel, shape: Shape, edges: EdgeSet): Manifold {
+  const [w, h, d] = shape.size;
+  const wedge = shape.type === 'wedge';
+  const length = wedge ? d : h;
+  // The most any edge or corner can take before the outline closes up.
+  const reach = wedge ? (w + h - Math.hypot(w, h)) / 2 : Math.min(w, d) / 2;
+  const limit = (size: number) => Math.min(Math.max(size, 0), reach * 0.999);
+  const corner = shape.type === 'cylinder' ? 0 : limit(edges.vertical.size);
+  const top = Math.min(limit(edges.top.size), length);
+  const bottom = Math.min(limit(edges.bottom.size), length - top);
 
   const points: [number, number, number][] = [];
-  const add = (y: number, inset: number) => {
-    for (const [x, z] of outline(Math.max(inset, 0))) points.push([x, y, z]);
+  const add = (at: number, inset: number) => {
+    const flat = wedge ? wedgeOutline(wasm, shape, edges, corner, inset) : boxOutline(wasm, shape, edges, corner, inset);
+    for (const [x, y] of flat) points.push(wedge ? [x, y, at] : [x, at, y]);
   };
-  for (const { t, inset } of edgeSlices(edges.top.chamfer ? 'chamfer' : 'round', top)) add(h / 2 - t, inset);
-  for (const { t, inset } of edgeSlices(edges.bottom.chamfer ? 'chamfer' : 'round', bottom)) add(-h / 2 + t, inset);
+  const style = (chamfer?: boolean) => (chamfer ? 'chamfer' : 'round');
+  for (const { t, inset } of edgeSlices(style(edges.top.chamfer), top)) add(length / 2 - t, Math.max(inset, 0));
+  for (const { t, inset } of edgeSlices(style(edges.bottom.chamfer), bottom)) add(-length / 2 + t, Math.max(inset, 0));
   return wasm.Manifold.hull(points);
+}
+
+/**
+ * A cone or pyramid with its base edge rounded or chamfered. The corner between the base and the
+ * slope is cut along the profile (distance from the axis, height); each point of that profile is an
+ * outline at its height, and the solid is their hull. For a pyramid the distance is to its faces.
+ */
+function edgedTaper(wasm: ManifoldToplevel, shape: Shape, edge: EdgeSpec): Manifold {
+  const [w, h, d] = shape.size;
+  const cone = shape.type === 'cone';
+  const R = w / 2;
+  const slope = Math.hypot(R, h);
+  const theta = Math.acos(R / slope);
+  // How far from the corner the cut starts on each side.
+  const tangent = Math.min(edge.size / (edge.chamfer ? 1 : Math.tan(theta / 2)), Math.min(R, slope) * 0.999);
+  const ux = -R / slope;
+  const uy = h / slope;
+  const profile: Point2[] = [];
+  if (edge.chamfer) {
+    profile.push([R - tangent, 0], [R + tangent * ux, tangent * uy]);
+  } else {
+    const radius = tangent * Math.tan(theta / 2);
+    const bx = -1 + ux;
+    const by = uy;
+    const bl = Math.hypot(bx, by);
+    const dist = radius / Math.sin(theta / 2);
+    const cx = R + (bx / bl) * dist;
+    const cy = (by / bl) * dist;
+    const a1 = -Math.PI / 2;
+    const a2 = Math.atan2(tangent * uy - cy, R + tangent * ux - cx);
+    let delta = a2 - a1;
+    while (delta > Math.PI) delta -= 2 * Math.PI;
+    while (delta < -Math.PI) delta += 2 * Math.PI;
+    for (let i = 0; i <= EDGE_STEPS; i++) {
+      const a = a1 + (delta * i) / EDGE_STEPS;
+      profile.push([cx + radius * Math.cos(a), cy + radius * Math.sin(a)]);
+    }
+  }
+  const unit = cone ? wasm.CrossSection.circle(1, CYLINDER_SEGMENTS) : wasm.CrossSection.square([2, 2], true);
+  const ring = unit.toPolygons()[0] as Point2[];
+  unit.delete();
+  const points: [number, number, number][] = [[0, h / 2, 0]];
+  for (const [rho, y] of profile) {
+    for (const [x, z] of ring) points.push([x * rho, y - h / 2, z * rho * (d / w)]);
+  }
+  return wasm.Manifold.hull(points);
+}
+
+function edgedSolid(wasm: ManifoldToplevel, shape: Shape, edges: EdgeSet): Manifold {
+  if (shape.type === 'cone' || shape.type === 'pyramid') return edgedTaper(wasm, shape, edges.bottom);
+  return edgedPrism(wasm, shape, edges);
 }

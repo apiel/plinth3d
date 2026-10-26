@@ -27,7 +27,7 @@ Mark a shape as a hole, select it together with a solid, and press **Merge** (`G
 
 ### Round or chamfer corners and edges
 
-Select a box or cylinder and use **Corners and edges** in the properties panel: each line (vertical corners for boxes, top edge, bottom edge) has an icon that switches between rounded and chamfered, and a size in mm. Zero is square.
+Select a box, cylinder, wedge, cone or pyramid and use **Corners and edges** in the properties panel: each line (vertical corners for boxes, top edge, bottom edge) has an icon that switches between rounded and chamfered, and a size in mm. Zero is square.
 
 ### Light and dark
 
@@ -39,7 +39,7 @@ Switch themes from the toolbar. Your choice is remembered.
 
 **Shapes**
 - Box, cylinder, sphere, cone, pyramid, wedge and torus. Click an icon in the toolbar to add one to the plan; it is selected straight away.
-- Round or chamfer the vertical corners, top edge and bottom edge of a box or cylinder (see above).
+- Round or chamfer the vertical corners, top edge and bottom edge of a box, cylinder, wedge, cone or pyramid (see above).
 - Merge shapes into one object, and unmerge them again.
 - Holes: a shape marked as a hole is subtracted from the solids it is merged with.
 
@@ -119,7 +119,7 @@ Projects are plain JSON, so they are easy to diff and version-control:
 
 Units are millimetres. Rotations are degrees, applied in XYZ order. The app's Y axis is up.
 
-`edges` is optional and applies to boxes and cylinders. Each of `vertical` (boxes only), `top` and `bottom` has a `size` in mm and an optional `chamfer: true`.
+`edges` is optional and applies to boxes, cylinders, wedges, cones and pyramids (a cone or pyramid uses only `bottom`). Each of `vertical` (boxes only), `top` and `bottom` has a `size` in mm and an optional `chamfer: true`.
 
 ## Roadmap
 
