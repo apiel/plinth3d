@@ -61,6 +61,9 @@ const ARROW_COLOR = 0xff8a00;
 const DRAG_THRESHOLD = 3;
 /** Thickness of a face grab, in mm. */
 const FACE_THICKNESS = 0.01;
+/** The rim that grabs a face: this fraction of its shorter side, or this fraction of the camera distance. */
+const RIM_FRACTION = 0.25;
+const RIM_SCREEN_SCALE = 0.02;
 
 export type Theme = 'dark' | 'light';
 
@@ -406,11 +409,27 @@ export function Viewport(props: ViewportProps) {
     const shapeById = (id: string) => handlersRef.current.shapes.find((s) => s.id === id);
     const isLocked = (shape: Shape) => handlersRef.current.layers.find((l) => l.id === shape.layerId)?.locked ?? false;
 
-    // The face of a shape under the pointer, unless another shape is in front of it.
+    // Whether a point on a face is within the rim, the band along the face's edges that grabs it. The
+    // middle of a face is left to moving the shape, since on a box the face is the shape's surface.
+    const inRim = (hit: Intersection): boolean => {
+      const group = hit.object.parent;
+      const shape = group ? shapeById(group.userData.shapeId as string) : undefined;
+      if (!group || !shape) return false;
+      const { axis } = hit.object.userData.side as { axis: number };
+      const local = group.worldToLocal(hit.point.clone());
+      const [b, c] = [0, 1, 2].filter((i) => i !== axis);
+      const smallest = Math.min(shape.size[b], shape.size[c]);
+      // A fraction of the face, but never thinner than a few pixels when zoomed out. Half the face at most.
+      const band = Math.min(Math.max(smallest * RIM_FRACTION, hit.distance * RIM_SCREEN_SCALE), smallest / 2);
+      const edge = Math.min(shape.size[b] / 2 - Math.abs(local.getComponent(b)), shape.size[c] / 2 - Math.abs(local.getComponent(c)));
+      return edge <= band;
+    };
+
+    // The rim of a face under the pointer, unless another shape is in front of it.
     // The gizmo's arrows win where they overlap the face.
     const pickHandle = (): Intersection | undefined => {
       if (transform.axis !== null && transform.axis !== 'XYZ') return undefined;
-      const handle = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false)[0];
+      const handle = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false).find(inRim);
       if (!handle) return undefined;
       const body = raycaster
         .intersectObjects(objects.children, true)
