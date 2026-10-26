@@ -6,6 +6,22 @@ export type MouseAction = 'rotate' | 'pan' | 'zoom' | 'none';
 export type MouseButton = 'left' | 'middle' | 'right';
 export type MouseMap = Record<MouseButton, MouseAction>;
 
+/** What Ctrl and Shift do to the snap step while held: a factor, where 1 changes nothing and 0 turns snapping off. */
+export type StepKeys = { ctrl: number; shift: number };
+
+export const DEFAULT_STEP_KEYS: StepKeys = { ctrl: 0.5, shift: 5 };
+
+const FACTORS: { factor: number; label: string }[] = [
+  { factor: 0.1, label: 'Step ÷ 10' },
+  { factor: 0.2, label: 'Step ÷ 5' },
+  { factor: 0.5, label: 'Step ÷ 2' },
+  { factor: 1, label: 'No change' },
+  { factor: 2, label: 'Step × 2' },
+  { factor: 5, label: 'Step × 5' },
+  { factor: 10, label: 'Step × 10' },
+  { factor: 0, label: 'Snap off' },
+];
+
 export const DEFAULT_MOUSE_MAP: MouseMap = { left: 'rotate', middle: 'pan', right: 'pan' };
 
 const BUTTONS: { button: MouseButton; label: string; hint?: string }[] = [
@@ -24,10 +40,12 @@ const ACTIONS: { action: MouseAction; label: string }[] = [
 interface SettingsMenuProps {
   map: MouseMap;
   onChange: (map: MouseMap) => void;
+  stepKeys: StepKeys;
+  onStepKeys: (keys: StepKeys) => void;
 }
 
-/** The cog popover. It holds the settings, one titled section each; for now the mouse buttons. */
-export function SettingsMenu({ map, onChange }: SettingsMenuProps) {
+/** The cog popover. It holds the settings, one titled section each; the mouse buttons and the step keys. */
+export function SettingsMenu({ map, onChange, stepKeys, onStepKeys }: SettingsMenuProps) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -74,7 +92,26 @@ export function SettingsMenu({ map, onChange }: SettingsMenuProps) {
               </select>
             </label>
           ))}
-          <button type="button" onClick={() => onChange(DEFAULT_MOUSE_MAP)}>
+          <span className="mouse-menu-title">Step while dragging</span>
+          {(['ctrl', 'shift'] as const).map((key) => (
+            <label key={key} className="mouse-menu-row">
+              <span>{key === 'ctrl' ? 'Ctrl' : 'Shift'}</span>
+              <select value={stepKeys[key]} onChange={(e) => onStepKeys({ ...stepKeys, [key]: Number(e.target.value) })}>
+                {FACTORS.map((f) => (
+                  <option key={f.factor} value={f.factor}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+          <button
+            type="button"
+            onClick={() => {
+              onChange(DEFAULT_MOUSE_MAP);
+              onStepKeys(DEFAULT_STEP_KEYS);
+            }}
+          >
             Reset
           </button>
         </div>

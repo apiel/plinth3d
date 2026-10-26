@@ -29,13 +29,13 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import type { MouseMap } from './SettingsMenu';
+import type { MouseMap, StepKeys } from './SettingsMenu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { ManifoldToplevel } from 'manifold-3d';
 import type { Layer, Shape, Vec3 } from './model';
-import { localPrimitive, meshData, resizeAlongAxis, shapePosition, shapeQuaternion, snapTo, type MeshData } from './geometry';
+import { localPrimitive, meshData, resizeAlongAxis, shapePosition, shapeQuaternion, modifiedStep, snapTo, type MeshData } from './geometry';
 
 const DEG_TO_RAD = Math.PI / 180;
 const HOLE_COLOR = '#ff4d4d';
@@ -110,6 +110,8 @@ interface ViewportProps {
   onReadoutShow: (target: ReadoutTarget) => void;
   /** Shift + drag on empty space selects the shapes inside the rectangle. */
   onMarquee: (ids: string[]) => void;
+  /** What Ctrl and Shift do to the snap step while dragging. */
+  stepKeys: StepKeys;
   /** What each mouse button does to the view. */
   mouseMap: MouseMap;
   /** When on, edges and corners of boxes are for rounding; otherwise edges resize. */
@@ -686,6 +688,10 @@ export function Viewport(props: ViewportProps) {
       handlersRef.current.onMarquee(ids);
     };
 
+    // The snap step for this event: Ctrl and Shift scale it by their settings.
+    const stepOf = (event: { ctrlKey: boolean; shiftKey: boolean }) =>
+      modifiedStep(handlersRef.current.snap, handlersRef.current.stepKeys, event.ctrlKey, event.shiftKey);
+
     const onMove = (event: PointerEvent) => {
       if (marquee) {
         updateMarquee(event);
@@ -725,7 +731,7 @@ export function Viewport(props: ViewportProps) {
       if (drag.kind === 'move') {
         const delta = hit.sub(drag.start);
         for (const member of drag.members) {
-          const position = member.start.map((value, i) => snapTo(value + delta.getComponent(i), handlersRef.current.snap)) as Vec3;
+          const position = member.start.map((value, i) => snapTo(value + delta.getComponent(i), stepOf(event))) as Vec3;
           handlersRef.current.onShapeLive(member.id, { position });
         }
         return;
@@ -735,7 +741,7 @@ export function Viewport(props: ViewportProps) {
       let shape = drag.startShape;
       for (const face of drag.faces) {
         const growth = face.sign * delta.dot(face.dir);
-        const extent = Math.max(MIN_SIZE, snapTo(drag.startShape.size[face.axis] + growth, handlersRef.current.snap));
+        const extent = Math.max(MIN_SIZE, snapTo(drag.startShape.size[face.axis] + growth, stepOf(event)));
         shape = { ...shape, ...resizeAlongAxis(shape, face.axis, face.sign, extent) };
       }
       handlersRef.current.onShapeLive(drag.id, { size: shape.size, position: shape.position });
@@ -899,10 +905,24 @@ export function Viewport(props: ViewportProps) {
     if (view) view.orbit.mouseButtons = mouseButtonsFor(props.mouseMap);
   }, [props.mouseMap]);
 
-  // The move arrows snap to the same step as dragging.
+  // The move arrows snap to the same step as dragging, scaled while Ctrl or Shift is held.
   useEffect(() => {
-    sceneRef.current?.transform.setTranslationSnap(props.snap > 0 ? props.snap : null);
-  }, [props.snap]);
+    const apply = (ctrl: boolean, shift: boolean) => {
+      const step = modifiedStep(props.snap, props.stepKeys, ctrl, shift);
+      sceneRef.current?.transform.setTranslationSnap(step > 0 ? step : null);
+    };
+    apply(false, false);
+    const onKey = (event: KeyboardEvent) => apply(event.ctrlKey, event.shiftKey);
+    const onBlur = () => apply(false, false);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [props.snap, props.stepKeys]);
 
   // Follow the theme: background and grid colours.
   useEffect(() => {

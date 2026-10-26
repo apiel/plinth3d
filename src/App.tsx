@@ -44,7 +44,7 @@ import {
 } from './model';
 import { addLayerFromFile, parseLayer, serializeLayer } from './model';
 import { RoundModal } from './RoundModal';
-import { DEFAULT_MOUSE_MAP, SettingsMenu, type MouseMap } from './SettingsMenu';
+import { DEFAULT_MOUSE_MAP, DEFAULT_STEP_KEYS, SettingsMenu, type MouseMap, type StepKeys } from './SettingsMenu';
 import { encodeBinarySTL, loadEngine, mergeShapes, restoreSources, resizeAlongAxis, resultMesh } from './geometry';
 
 const AUTOSAVE_KEY = 'plinth3d:autosave';
@@ -77,6 +77,7 @@ function downloadBlob(blob: Blob, filename: string) {
 
 const THEME_KEY = 'plinth3d:theme';
 const MOUSE_KEY = 'plinth3d:mouse';
+const STEP_KEYS_KEY = 'plinth3d:stepkeys';
 
 const DRAG_PLANE_HINT: Record<DragPlane, string> = {
   XY: 'Drag a shape in X and Y (front view)',
@@ -92,6 +93,16 @@ function loadMouseMap(): MouseMap {
     // Storage blocked or unreadable: use the defaults.
   }
   return DEFAULT_MOUSE_MAP;
+}
+
+function loadStepKeys(): StepKeys {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STEP_KEYS_KEY) ?? 'null');
+    if (saved && Number.isFinite(saved.ctrl) && Number.isFinite(saved.shift)) return { ctrl: saved.ctrl, shift: saved.shift };
+  } catch {
+    // Storage blocked or unreadable: use the defaults.
+  }
+  return DEFAULT_STEP_KEYS;
 }
 
 function loadTheme(): Theme {
@@ -135,6 +146,7 @@ export default function App() {
   const [roundTarget, setRoundTarget] = useState<{ shapeId: string; key: string; x: number; y: number } | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [mouseMap, setMouseMap] = useState<MouseMap>(loadMouseMap);
+  const [stepKeys, setStepKeys] = useState<StepKeys>(loadStepKeys);
   const [dragPlane, setDragPlane] = useState<DragPlane>('XZ');
   // Snap step for moving and resizing, in mm. 0 turns snapping off.
   const [snap, setSnap] = useState<number>(1);
@@ -296,12 +308,12 @@ export default function App() {
 
   // Arrow keys nudge the selection like Tinkercad: on the ground, relative to the
   // view. Up moves away from the camera, snapped to the nearest axis. Ctrl + up or
-  // down moves the shape up or down. One snap step, ten with Shift, a tenth with Alt.
+  // down moves the shape up or down. One snap step, scaled by the Shift key's setting, a tenth with Alt.
   const nudgeSelected = (right: number, forward: number, event: KeyboardEvent) => {
     const movable = selectedShapes.filter((s) => !layerOf(s.layerId)?.locked);
     if (movable.length === 0) return;
     const base = snap > 0 ? snap : 1;
-    const step = event.shiftKey ? base * 10 : event.altKey ? base / 10 : base;
+    const step = event.shiftKey ? base * stepKeys.shift : event.altKey ? base / 10 : base;
     const delta: Vec3 = [0, 0, 0];
     const [fx, fz] = viewDir.current;
     if (event.ctrlKey || event.metaKey) {
@@ -717,6 +729,15 @@ export default function App() {
         </div>
         <div className="spacer" />
         <SettingsMenu
+          stepKeys={stepKeys}
+          onStepKeys={(keys) => {
+            setStepKeys(keys);
+            try {
+              localStorage.setItem(STEP_KEYS_KEY, JSON.stringify(keys));
+            } catch {
+              // Storage blocked: the choice lasts until reload.
+            }
+          }}
           map={mouseMap}
           onChange={(map) => {
             setMouseMap(map);
@@ -810,6 +831,7 @@ export default function App() {
           readout={readout}
           roundMode={roundMode !== altHeld}
           mouseMap={mouseMap}
+          stepKeys={stepKeys}
           onRoundClick={openRound}
           onMarquee={(ids) => setSelection([...selection.filter((x) => !ids.includes(x)), ...ids])}
           onShapeLive={shapeLive}

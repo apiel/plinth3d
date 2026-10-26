@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildResult, encodeBinarySTL, loadEngine, localPrimitive, meshData, mergeShapes } from './geometry';
+import { buildResult, encodeBinarySTL, loadEngine, localPrimitive, meshData, mergeShapes, modifiedStep } from './geometry';
 import { createShape, createProject, type Shape } from './model';
 
 function layerId(): string {
@@ -242,5 +242,19 @@ describe('rounded corner alone', () => {
     expect(rounded.volume()).toBeLessThan(8000);
     expect(rounded.volume()).toBeGreaterThan(8000 - 216);
     rounded.delete();
+  });
+});
+
+describe('modifiedStep', () => {
+  const keys = { ctrl: 0.5, shift: 5 };
+  it('scales the step by the held keys', () => {
+    expect(modifiedStep(1, keys, false, false)).toBe(1);
+    expect(modifiedStep(1, keys, true, false)).toBe(0.5);
+    expect(modifiedStep(1, keys, false, true)).toBe(5);
+    expect(modifiedStep(2, keys, true, true)).toBe(5);
+  });
+  it('turns snapping off with a zero factor, and keeps it off when it already is', () => {
+    expect(modifiedStep(1, { ctrl: 0, shift: 5 }, true, false)).toBe(0);
+    expect(modifiedStep(0, keys, false, true)).toBe(0);
   });
 });
