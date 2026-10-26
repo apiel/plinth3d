@@ -110,6 +110,8 @@ export default function App() {
   const [engine, setEngine] = useState<ManifoldToplevel | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // An edge or corner clicked on an unselected box. Opens the rounding modal.
+  // Round mode: edges and corners open the rounding modal. Otherwise edges resize.
+  const [roundMode, setRoundMode] = useState(false);
   const [roundTarget, setRoundTarget] = useState<{ shapeId: string; key: string; x: number; y: number } | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [dragPlane, setDragPlane] = useState<DragPlane>('XZ');
@@ -489,6 +491,9 @@ export default function App() {
         setGizmoMode('translate');
       } else if (plain && (key === 'r' || key === 'e')) {
         setGizmoMode('rotate');
+      } else if (plain && key === 'f') {
+        setRoundMode((on) => !on);
+        setRoundTarget(null);
       } else if (plain && key === 'g') {
         mergeSelected();
       } else if (plain && key === 'u') {
@@ -560,6 +565,21 @@ export default function App() {
           >
             <Label text="Rotate" at={0} />
             <KeyHint k="R" />
+          </button>
+        </div>
+        <div className="group">
+          <button
+            type="button"
+            className={roundMode ? 'toggled' : ''}
+            onClick={() => {
+              setRoundMode(!roundMode);
+              setRoundTarget(null);
+            }}
+            aria-pressed={roundMode}
+            title="Round mode: click an edge or corner to round it (F)"
+          >
+            <Label text="Round" at={0} />
+            <KeyHint k="F" />
           </button>
         </div>
         <div className="group segmented" role="group" aria-label="Drag plane">
@@ -730,6 +750,7 @@ export default function App() {
           snap={snap}
           viewDirRef={viewDir}
           readout={readout}
+          roundMode={roundMode}
           onRoundClick={openRound}
           onMarquee={(ids) => setSelection([...selection.filter((x) => !ids.includes(x)), ...ids])}
           onShapeLive={shapeLive}

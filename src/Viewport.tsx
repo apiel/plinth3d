@@ -109,13 +109,15 @@ interface ViewportProps {
   onReadoutShow: (target: ReadoutTarget) => void;
   /** Shift + drag on empty space selects the shapes inside the rectangle. */
   onMarquee: (ids: string[]) => void;
-  /** A click on a highlighted edge or corner of an unselected box. */
+  /** When on, edges and corners of boxes are for rounding; otherwise edges resize. */
+  roundMode: boolean;
+  /** A click on a highlighted edge or corner in round mode. */
   onRoundClick: (shapeId: string, key: string, x: number, y: number) => void;
   /** Called on every step of a drag. Does not add undo steps. */
   onShapeLive: (id: string, patch: Partial<Shape>) => void;
 }
 
-/** An edge or corner of an unselected box, under the pointer. */
+/** An edge or corner of a box, under the pointer in round mode. */
 type RoundHover = { shapeId: string; key: string; a: Vector3; b: Vector3; corner: boolean };
 
 /** The drag in progress, if any. */
@@ -160,6 +162,7 @@ export function Viewport(props: ViewportProps) {
     gizmoDragging: boolean;
     activeHandle: string | null;
     hoveredHandle: string | null;
+    roundReset?: () => void;
   } | null>(null);
 
   // One-time scene setup.
@@ -308,7 +311,7 @@ export function Viewport(props: ViewportProps) {
 
     const scratch = new Vector3();
 
-    // Rounding: an edge or corner of an unselected box is highlighted under the pointer.
+    // Rounding: in round mode, an edge or corner of a box is highlighted under the pointer.
     // A click on it opens the rounding modal instead of selecting the box.
     const roundHighlight = new Mesh(
       new BoxGeometry(1, 1, 1),
@@ -319,6 +322,9 @@ export function Viewport(props: ViewportProps) {
     scene.add(roundHighlight);
     let roundHover: RoundHover | null = null;
     let roundPress: { shapeId: string; key: string } | null = null;
+    sceneRef.current!.roundReset = () => {
+      roundHover = null;
+    };
 
     const updateRoundHighlight = () => {
       const h = roundHover;
@@ -340,7 +346,7 @@ export function Viewport(props: ViewportProps) {
       roundHighlight.visible = true;
     };
 
-    // The corner or edge of an unselected box nearest the pointer, if any. Corners win.
+    // In round mode, the corner or edge of a box nearest the pointer, if any. Corners win.
     const findRoundTarget = (event: PointerEvent): RoundHover | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       const toPage = (world: Vector3) => {
@@ -348,6 +354,7 @@ export function Viewport(props: ViewportProps) {
         return new Vector2(rect.left + ((p.x + 1) / 2) * rect.width, rect.top + ((1 - p.y) / 2) * rect.height);
       };
       const pointer = new Vector2(event.clientX, event.clientY);
+      if (!handlersRef.current.roundMode) return null;
       let cornerHit: RoundHover | null = null;
       let cornerDistance = CORNER_PICK_PX;
       let edgeHit: RoundHover | null = null;
@@ -356,8 +363,7 @@ export function Viewport(props: ViewportProps) {
         if (!(group instanceof Group) || !group.userData.shapeId) continue;
         const id = group.userData.shapeId as string;
         const shape = handlersRef.current.shapes.find((s) => s.id === id);
-        // Only unselected boxes can be rounded.
-        if (!shape || shape.type !== 'box' || handlersRef.current.selection.includes(id)) continue;
+        if (!shape || shape.type !== 'box') continue;
         const half = shape.size.map((v) => v / 2);
         group.updateMatrixWorld(true);
         const corners: { sign: number[]; world: Vector3; px: Vector2 }[] = [];
@@ -411,7 +417,7 @@ export function Viewport(props: ViewportProps) {
       const edge = hintEdge;
       const group = edge ? (objects.children.find((c) => c.userData.shapeId === edge.shapeId) as Group | undefined) : undefined;
       const shape = edge ? handlersRef.current.shapes.find((s) => s.id === edge.shapeId) : undefined;
-      if (!edge || !group || !shape || handlersRef.current.selection.length !== 1) {
+      if (!edge || !group || !shape) {
         arrow.visible = false;
         return;
       }
@@ -501,6 +507,17 @@ export function Viewport(props: ViewportProps) {
     const shapeById = (id: string) => handlersRef.current.shapes.find((s) => s.id === id);
     const isLocked = (shape: Shape) => handlersRef.current.layers.find((l) => l.id === shape.layerId)?.locked ?? false;
 
+    // The edge grab under the pointer, unless a shape is in front of it.
+    const pickHandle = (): Intersection | undefined => {
+      const handle = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false)[0];
+      if (!handle) return undefined;
+      const body = raycaster
+        .intersectObjects(objects.children, true)
+        .find((h) => h.object instanceof Mesh && h.object.userData.edgeAlong === undefined);
+      const width = handle.object.getWorldPosition(scratch).distanceTo(camera.position) * EDGE_SCREEN_SCALE;
+      return body && body.distance < handle.distance - width ? undefined : handle;
+    };
+
     // Dragging an edge stretches the shape along one of the two axes that edge moves.
     // Each click on the edge switches to the other axis. The opposite faces stay where they are.
     const startResize = (edge: Intersection) => {
@@ -510,6 +527,8 @@ export function Viewport(props: ViewportProps) {
       const id = group.userData.shapeId as string;
       const shape = shapeById(id);
       if (!shape) return;
+      // The readout belongs to the selected shape, so an edge of any other shape selects it first.
+      if (handlersRef.current.selection.length !== 1 || handlersRef.current.selection[0] !== id) handlersRef.current.onSelect(id, false);
 
       const axisDir = new Vector3().setComponent(along, 1).applyQuaternion(group.quaternion);
       // A plane through the edge that faces the camera, so the mouse moves the edge.
@@ -544,7 +563,7 @@ export function Viewport(props: ViewportProps) {
       orbit.enabled = false;
       const view = sceneRef.current;
       if (view) {
-        view.activeHandle = edge.object.userData.key as string;
+        view.activeHandle = handleId(edge.object);
         paintHandles(view);
       }
     };
@@ -593,7 +612,7 @@ export function Viewport(props: ViewportProps) {
       }
 
       // Face handles win over the move arrows, which can sit on the same spot.
-      const handle = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false)[0];
+      const handle = pickHandle();
       if (handle) {
         event.stopImmediatePropagation();
         startResize(handle);
@@ -674,12 +693,12 @@ export function Viewport(props: ViewportProps) {
         // Hover highlight on the face handles, and on rounding targets.
         aim(event);
         roundHover = findRoundTarget(event);
-        const hovered = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false)[0];
-        const key = (hovered?.object.userData.key as string | undefined) ?? null;
+        const hovered = pickHandle();
+        const key = hovered ? handleId(hovered.object) : null;
         hintEdge = hovered
           ? {
               shapeId: (hovered.object.parent?.userData.shapeId as string) ?? '',
-              edgeKey: key ?? '',
+              edgeKey: (hovered.object.userData.key as string) ?? '',
               sides: hovered.object.userData.sides as { axis: number; sign: number }[],
             }
           : null;
@@ -740,9 +759,11 @@ export function Viewport(props: ViewportProps) {
           edgeChoice.set(drag.edgeKey, next);
           handlersRef.current.onReadoutShow({ id: drag.id, kind: 'resize', sides: [drag.sides[next]] });
         }
+        // After a drag the edge goes dark. After a plain click it stays lit while its readout is open.
+        const dragged = drag.moved;
         drag = null;
         if (sceneRef.current) {
-          sceneRef.current.activeHandle = null;
+          if (dragged) sceneRef.current.activeHandle = null;
           paintHandles(sceneRef.current);
         }
         orbit.enabled = true;
@@ -838,15 +859,16 @@ export function Viewport(props: ViewportProps) {
       group.add(mesh);
       (inPivot ? pivot : objects).add(group);
 
-      if (selectedSet.has(shape.id) && !lockedLayers.has(shape.layerId) && !showResult) {
+      const unlocked = !lockedLayers.has(shape.layerId) && !showResult;
+      if (selectedSet.has(shape.id) && unlocked) {
         group.add(boundingBox(shape.size, THEMES[theme].outline));
-        // Handles resize one shape, so they only show when a single shape is selected.
-        if (!multi) {
-          transform.attach(group);
-          for (const handle of makeEdges(shape.size)) {
-            group.add(handle);
-            view.handles.push(handle);
-          }
+        if (!multi) transform.attach(group);
+      }
+      // Edges resize any shape, selected or not. Round mode uses the edges for rounding instead.
+      if (unlocked && !inPivot && !props.roundMode) {
+        for (const handle of makeEdges(shape.size)) {
+          group.add(handle);
+          view.handles.push(handle);
         }
       }
     }
@@ -854,7 +876,20 @@ export function Viewport(props: ViewportProps) {
     paintHandles(view);
     // Rotation applies to one shape; a selection only moves.
     transform.setMode(multi ? 'translate' : props.gizmoMode);
-  }, [props.engine, props.shapes, props.layers, props.selection, props.showResult, props.gizmoMode, props.theme]);
+  }, [props.engine, props.shapes, props.layers, props.selection, props.showResult, props.gizmoMode, props.theme, props.roundMode]);
+
+  // The clicked edge stays lit while its readout is open, and goes dark when the readout closes.
+  useEffect(() => {
+    const view = sceneRef.current;
+    if (!view || props.readout?.kind === 'resize') return;
+    view.activeHandle = null;
+    paintHandles(view);
+  }, [props.readout]);
+
+  // Leaving round mode drops any rounding highlight.
+  useEffect(() => {
+    sceneRef.current?.roundReset?.();
+  }, [props.roundMode]);
 
   // The move arrows snap to the same step as dragging.
   useEffect(() => {
@@ -1032,10 +1067,15 @@ function makeEdges(size: Vec3): Mesh[] {
   return edges;
 }
 
+/** An edge grab's identity across shapes: its shape and its place on the box. */
+function handleId(edge: Object3D): string {
+  return `${edge.parent?.userData.shapeId as string}|${edge.userData.key as string}`;
+}
+
 /** Shows the hovered edge lightly, and the pressed edge strongly. */
 function paintHandles(view: { handles: Mesh[]; activeHandle: string | null; hoveredHandle: string | null }) {
   for (const edge of view.handles) {
-    const key = edge.userData.key as string;
+    const key = handleId(edge);
     const material = edge.material as MeshBasicMaterial;
     material.color.set(key === view.activeHandle ? HANDLE_ACTIVE_COLOR : HANDLE_HOVER_COLOR);
     material.opacity = key === view.activeHandle ? 0.9 : key === view.hoveredHandle ? 0.5 : 0;
