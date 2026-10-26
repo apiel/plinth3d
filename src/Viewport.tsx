@@ -837,8 +837,9 @@ export function Viewport(props: ViewportProps) {
         group.add(boundingBox(shape.size, THEMES[theme].outline));
         if (!multi) transform.attach(group);
       }
-      // The faces of any shape resize it, selected or not. Round mode uses the edges for rounding instead.
-      if (unlocked && !inPivot && !props.roundMode) {
+      // With a selection, only the selected shape resizes; with none, any shape does. Round mode uses the edges instead.
+      const facesActive = selectedShapes.length === 0 || (!multi && selectedSet.has(shape.id));
+      if (unlocked && facesActive && !props.roundMode) {
         for (const handle of makeFaces(shape.size)) {
           group.add(handle);
           view.handles.push(handle);
