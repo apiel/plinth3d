@@ -689,8 +689,8 @@ export function Viewport(props: ViewportProps) {
     };
 
     // The snap step for this event: Ctrl and Shift scale it by their settings.
-    const stepOf = (event: { ctrlKey: boolean; shiftKey: boolean }) =>
-      modifiedStep(handlersRef.current.snap, handlersRef.current.stepKeys, event.ctrlKey, event.shiftKey);
+    const stepOf = (event: { ctrlKey: boolean; shiftKey: boolean; altKey: boolean }) =>
+      modifiedStep(handlersRef.current.snap, handlersRef.current.stepKeys, { ctrl: event.ctrlKey, shift: event.shiftKey, alt: event.altKey });
 
     const onMove = (event: PointerEvent) => {
       if (marquee) {
@@ -905,14 +905,14 @@ export function Viewport(props: ViewportProps) {
     if (view) view.orbit.mouseButtons = mouseButtonsFor(props.mouseMap);
   }, [props.mouseMap]);
 
-  // The move arrows snap to the same step as dragging, scaled while Ctrl or Shift is held.
+  // The move arrows snap to the same step as dragging, scaled while Ctrl, Shift or Alt is held.
   useEffect(() => {
-    const apply = (ctrl: boolean, shift: boolean) => {
-      const step = modifiedStep(props.snap, props.stepKeys, ctrl, shift);
+    const apply = (ctrl: boolean, shift: boolean, alt = false) => {
+      const step = modifiedStep(props.snap, props.stepKeys, { ctrl, shift, alt });
       sceneRef.current?.transform.setTranslationSnap(step > 0 ? step : null);
     };
     apply(false, false);
-    const onKey = (event: KeyboardEvent) => apply(event.ctrlKey, event.shiftKey);
+    const onKey = (event: KeyboardEvent) => apply(event.ctrlKey, event.shiftKey, event.altKey);
     const onBlur = () => apply(false, false);
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKey);

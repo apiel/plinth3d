@@ -98,7 +98,10 @@ function loadMouseMap(): MouseMap {
 function loadStepKeys(): StepKeys {
   try {
     const saved = JSON.parse(localStorage.getItem(STEP_KEYS_KEY) ?? 'null');
-    if (saved && Number.isFinite(saved.ctrl) && Number.isFinite(saved.shift)) return { ctrl: saved.ctrl, shift: saved.shift };
+    if (saved && Number.isFinite(saved.ctrl) && Number.isFinite(saved.shift)) {
+      const alt = saved.alt === 'round' || Number.isFinite(saved.alt) ? saved.alt : DEFAULT_STEP_KEYS.alt;
+      return { ctrl: saved.ctrl, shift: saved.shift, alt };
+    }
   } catch {
     // Storage blocked or unreadable: use the defaults.
   }
@@ -147,6 +150,8 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [mouseMap, setMouseMap] = useState<MouseMap>(loadMouseMap);
   const [stepKeys, setStepKeys] = useState<StepKeys>(loadStepKeys);
+  const stepKeysRef = useRef(stepKeys);
+  stepKeysRef.current = stepKeys;
   const [dragPlane, setDragPlane] = useState<DragPlane>('XZ');
   // Snap step for moving and resizing, in mm. 0 turns snapping off.
   const [snap, setSnap] = useState<number>(1);
@@ -308,12 +313,12 @@ export default function App() {
 
   // Arrow keys nudge the selection like Tinkercad: on the ground, relative to the
   // view. Up moves away from the camera, snapped to the nearest axis. Ctrl + up or
-  // down moves the shape up or down. One snap step, scaled by the Shift key's setting, a tenth with Alt.
+  // down moves the shape up or down. One snap step, scaled by the Shift key's setting, the Alt key's setting (a tenth while Alt flips round mode).
   const nudgeSelected = (right: number, forward: number, event: KeyboardEvent) => {
     const movable = selectedShapes.filter((s) => !layerOf(s.layerId)?.locked);
     if (movable.length === 0) return;
     const base = snap > 0 ? snap : 1;
-    const step = event.shiftKey ? base * stepKeys.shift : event.altKey ? base / 10 : base;
+    const step = event.shiftKey ? base * stepKeys.shift : event.altKey ? base * (typeof stepKeys.alt === 'number' ? stepKeys.alt : 0.1) : base;
     const delta: Vec3 = [0, 0, 0];
     const [fx, fz] = viewDir.current;
     if (event.ctrlKey || event.metaKey) {
@@ -497,7 +502,7 @@ export default function App() {
       if (event.key !== 'Alt') return;
       // Without this, Alt can focus the browser menu and swallow the next click.
       event.preventDefault();
-      setAltHeld(event.type === 'keydown');
+      setAltHeld(event.type === 'keydown' && stepKeysRef.current.alt === 'round');
     };
     const release = () => setAltHeld(false);
     window.addEventListener('keydown', track);

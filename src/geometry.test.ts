@@ -246,15 +246,20 @@ describe('rounded corner alone', () => {
 });
 
 describe('modifiedStep', () => {
-  const keys = { ctrl: 0.5, shift: 5 };
+  const keys = { ctrl: 0.5, shift: 5, alt: 'round' as number | 'round' };
+  const held = (ctrl: boolean, shift: boolean, alt = false) => ({ ctrl, shift, alt });
   it('scales the step by the held keys', () => {
-    expect(modifiedStep(1, keys, false, false)).toBe(1);
-    expect(modifiedStep(1, keys, true, false)).toBe(0.5);
-    expect(modifiedStep(1, keys, false, true)).toBe(5);
-    expect(modifiedStep(2, keys, true, true)).toBe(5);
+    expect(modifiedStep(1, keys, held(false, false))).toBe(1);
+    expect(modifiedStep(1, keys, held(true, false))).toBe(0.5);
+    expect(modifiedStep(1, keys, held(false, true))).toBe(5);
+    expect(modifiedStep(2, keys, held(true, true))).toBe(5);
+  });
+  it('leaves the step alone for Alt while it is set to round mode, and scales it otherwise', () => {
+    expect(modifiedStep(1, keys, held(false, false, true))).toBe(1);
+    expect(modifiedStep(1, { ...keys, alt: 0.1 }, held(false, false, true))).toBe(0.1);
   });
   it('turns snapping off with a zero factor, and keeps it off when it already is', () => {
-    expect(modifiedStep(1, { ctrl: 0, shift: 5 }, true, false)).toBe(0);
-    expect(modifiedStep(0, keys, false, true)).toBe(0);
+    expect(modifiedStep(1, { ...keys, ctrl: 0 }, held(true, false))).toBe(0);
+    expect(modifiedStep(0, keys, held(false, true))).toBe(0);
   });
 });

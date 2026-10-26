@@ -297,12 +297,18 @@ export function snapTo(value: number, step: number): number {
 }
 
 /**
- * The snap step while Ctrl and Shift are held. Each key has a factor; 1 leaves the step alone
- * and 0 turns snapping off. A step that is already off stays off.
+ * The snap step while Ctrl, Shift and Alt are held. Each key has a factor; 1 leaves the step alone
+ * and 0 turns snapping off. Alt can also be set to 'round', which is not a factor. A step that is
+ * already off stays off.
  */
-export function modifiedStep(base: number, keys: { ctrl: number; shift: number }, ctrl: boolean, shift: boolean): number {
+export function modifiedStep(
+  base: number,
+  keys: { ctrl: number; shift: number; alt: number | 'round' },
+  held: { ctrl: boolean; shift: boolean; alt?: boolean },
+): number {
   if (base <= 0) return 0;
-  return base * (ctrl ? keys.ctrl : 1) * (shift ? keys.shift : 1);
+  const alt = typeof keys.alt === 'number' ? keys.alt : 1;
+  return base * (held.ctrl ? keys.ctrl : 1) * (held.shift ? keys.shift : 1) * (held.alt ? alt : 1);
 }
 
 /**

@@ -7,9 +7,10 @@ export type MouseButton = 'left' | 'middle' | 'right';
 export type MouseMap = Record<MouseButton, MouseAction>;
 
 /** What Ctrl and Shift do to the snap step while held: a factor, where 1 changes nothing and 0 turns snapping off. */
-export type StepKeys = { ctrl: number; shift: number };
+export type StepKeys = { ctrl: number; shift: number; alt: number | 'round' };
 
-export const DEFAULT_STEP_KEYS: StepKeys = { ctrl: 0.5, shift: 5 };
+/** Alt flips round mode by default, instead of changing the step. */
+export const DEFAULT_STEP_KEYS: StepKeys = { ctrl: 0.5, shift: 5, alt: 'round' };
 
 const FACTORS: { factor: number; label: string }[] = [
   { factor: 0.1, label: 'Step ÷ 10' },
@@ -93,10 +94,14 @@ export function SettingsMenu({ map, onChange, stepKeys, onStepKeys }: SettingsMe
             </label>
           ))}
           <span className="mouse-menu-title">Step while dragging</span>
-          {(['ctrl', 'shift'] as const).map((key) => (
+          {(['ctrl', 'shift', 'alt'] as const).map((key) => (
             <label key={key} className="mouse-menu-row">
-              <span>{key === 'ctrl' ? 'Ctrl' : 'Shift'}</span>
-              <select value={stepKeys[key]} onChange={(e) => onStepKeys({ ...stepKeys, [key]: Number(e.target.value) })}>
+              <span>{key === 'ctrl' ? 'Ctrl' : key === 'shift' ? 'Shift' : 'Alt'}</span>
+              <select
+                value={stepKeys[key]}
+                onChange={(e) => onStepKeys({ ...stepKeys, [key]: e.target.value === 'round' ? 'round' : Number(e.target.value) })}
+              >
+                {key === 'alt' && <option value="round">Round mode</option>}
                 {FACTORS.map((f) => (
                   <option key={f.factor} value={f.factor}>
                     {f.label}
