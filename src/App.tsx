@@ -44,6 +44,7 @@ import {
 } from './model';
 import { addLayerFromFile, parseLayer, serializeLayer } from './model';
 import { RoundModal } from './RoundModal';
+import { DEFAULT_MOUSE_MAP, SettingsMenu, type MouseMap } from './SettingsMenu';
 import { encodeBinarySTL, loadEngine, mergeShapes, restoreSources, resizeAlongAxis, resultMesh } from './geometry';
 
 const AUTOSAVE_KEY = 'plinth3d:autosave';
@@ -75,12 +76,23 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 const THEME_KEY = 'plinth3d:theme';
+const MOUSE_KEY = 'plinth3d:mouse';
 
 const DRAG_PLANE_HINT: Record<DragPlane, string> = {
   XY: 'Drag a shape in X and Y (front view)',
   XZ: 'Drag a shape in X and Z (across the plan)',
   YZ: 'Drag a shape in Y and Z (side view)',
 };
+
+function loadMouseMap(): MouseMap {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MOUSE_KEY) ?? 'null');
+    if (saved && typeof saved === 'object') return { ...DEFAULT_MOUSE_MAP, ...saved };
+  } catch {
+    // Storage blocked or unreadable: use the defaults.
+  }
+  return DEFAULT_MOUSE_MAP;
+}
 
 function loadTheme(): Theme {
   try {
@@ -122,6 +134,7 @@ export default function App() {
   const [altHeld, setAltHeld] = useState(false);
   const [roundTarget, setRoundTarget] = useState<{ shapeId: string; key: string; x: number; y: number } | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
+  const [mouseMap, setMouseMap] = useState<MouseMap>(loadMouseMap);
   const [dragPlane, setDragPlane] = useState<DragPlane>('XZ');
   // Snap step for moving and resizing, in mm. 0 turns snapping off.
   const [snap, setSnap] = useState<number>(1);
@@ -703,6 +716,17 @@ export default function App() {
           </button>
         </div>
         <div className="spacer" />
+        <SettingsMenu
+          map={mouseMap}
+          onChange={(map) => {
+            setMouseMap(map);
+            try {
+              localStorage.setItem(MOUSE_KEY, JSON.stringify(map));
+            } catch {
+              // Storage blocked: the choice lasts until reload.
+            }
+          }}
+        />
         <button
           type="button"
           className="tool-icon"
@@ -785,6 +809,7 @@ export default function App() {
           viewDirRef={viewDir}
           readout={readout}
           roundMode={roundMode !== altHeld}
+          mouseMap={mouseMap}
           onRoundClick={openRound}
           onMarquee={(ids) => setSelection([...selection.filter((x) => !ids.includes(x)), ...ids])}
           onShapeLive={shapeLive}

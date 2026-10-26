@@ -29,6 +29,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
+import type { MouseMap } from './SettingsMenu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
@@ -109,6 +110,8 @@ interface ViewportProps {
   onReadoutShow: (target: ReadoutTarget) => void;
   /** Shift + drag on empty space selects the shapes inside the rectangle. */
   onMarquee: (ids: string[]) => void;
+  /** What each mouse button does to the view. */
+  mouseMap: MouseMap;
   /** When on, edges and corners of boxes are for rounding; otherwise edges resize. */
   roundMode: boolean;
   /** A click on a highlighted edge or corner in round mode. */
@@ -184,8 +187,7 @@ export function Viewport(props: ViewportProps) {
 
     const orbit = new OrbitControls(camera, renderer.domElement);
     orbit.enableDamping = true;
-    // Middle and right buttons pan the view; the left button rotates it.
-    orbit.mouseButtons = { LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.PAN, RIGHT: MOUSE.PAN };
+    orbit.mouseButtons = mouseButtonsFor(handlersRef.current.mouseMap);
     // The view (camera position and orbit target) is kept across reloads.
     try {
       const saved = JSON.parse(localStorage.getItem(VIEW_KEY) ?? 'null');
@@ -891,6 +893,12 @@ export function Viewport(props: ViewportProps) {
     sceneRef.current?.roundReset?.();
   }, [props.roundMode]);
 
+  // The mouse menu decides what each button does to the view.
+  useEffect(() => {
+    const view = sceneRef.current;
+    if (view) view.orbit.mouseButtons = mouseButtonsFor(props.mouseMap);
+  }, [props.mouseMap]);
+
   // The move arrows snap to the same step as dragging.
   useEffect(() => {
     sceneRef.current?.transform.setTranslationSnap(props.snap > 0 ? props.snap : null);
@@ -1065,6 +1073,12 @@ function makeEdges(size: Vec3): Mesh[] {
     }
   }
   return edges;
+}
+
+const MOUSE_ACTION = { rotate: MOUSE.ROTATE, pan: MOUSE.PAN, zoom: MOUSE.DOLLY, none: null } as const;
+
+function mouseButtonsFor(map: MouseMap) {
+  return { LEFT: MOUSE_ACTION[map.left], MIDDLE: MOUSE_ACTION[map.middle], RIGHT: MOUSE_ACTION[map.right] };
 }
 
 /** An edge grab's identity across shapes: its shape and its place on the box. */
