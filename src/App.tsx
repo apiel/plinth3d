@@ -112,6 +112,8 @@ export default function App() {
   // An edge or corner clicked on an unselected box. Opens the rounding modal.
   // Round mode: edges and corners open the rounding modal. Otherwise edges resize.
   const [roundMode, setRoundMode] = useState(false);
+  // Holding Alt flips round mode for as long as it is held.
+  const [altHeld, setAltHeld] = useState(false);
   const [roundTarget, setRoundTarget] = useState<{ shapeId: string; key: string; x: number; y: number } | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [dragPlane, setDragPlane] = useState<DragPlane>('XZ');
@@ -459,6 +461,24 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    const track = (event: KeyboardEvent) => {
+      if (event.key !== 'Alt') return;
+      // Without this, Alt can focus the browser menu and swallow the next click.
+      event.preventDefault();
+      setAltHeld(event.type === 'keydown');
+    };
+    const release = () => setAltHeld(false);
+    window.addEventListener('keydown', track);
+    window.addEventListener('keyup', track);
+    window.addEventListener('blur', release);
+    return () => {
+      window.removeEventListener('keydown', track);
+      window.removeEventListener('keyup', track);
+      window.removeEventListener('blur', release);
+    };
+  }, []);
+
   // Keyboard shortcuts. Ignored while typing in a field.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -576,7 +596,7 @@ export default function App() {
               setRoundTarget(null);
             }}
             aria-pressed={roundMode}
-            title="Round mode: click an edge or corner to round it (F)"
+            title="Round mode: click an edge or corner to round it (F, or hold Alt)"
           >
             <Label text="Round" at={0} />
             <KeyHint k="F" />
@@ -750,7 +770,7 @@ export default function App() {
           snap={snap}
           viewDirRef={viewDir}
           readout={readout}
-          roundMode={roundMode}
+          roundMode={roundMode !== altHeld}
           onRoundClick={openRound}
           onMarquee={(ids) => setSelection([...selection.filter((x) => !ids.includes(x)), ...ids])}
           onShapeLive={shapeLive}

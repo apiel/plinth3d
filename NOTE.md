@@ -2,8 +2,6 @@ Step, default one
 Shifted one
 Ctrl one
 
-clicking out of radius modal close it
-
 
 Need a way to give a name to STL
 

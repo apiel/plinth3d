@@ -32,8 +32,16 @@ export function RoundModal({ shape, roundKey, x, y, onApply, onClose }: RoundMod
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
+    // A press anywhere outside the card closes it.
+    const onPress = (event: PointerEvent) => {
+      if (!card.current?.contains(event.target as Node)) onClose();
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('pointerdown', onPress, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onPress, true);
+    };
   }, [onClose]);
 
   const change = (text: string) => {
@@ -65,9 +73,6 @@ export function RoundModal({ shape, roundKey, x, y, onApply, onClose }: RoundMod
       <div className="round-modal-actions">
         <button type="button" onClick={() => onApply(0)} title="Make it square again">
           Square
-        </button>
-        <button type="button" className="primary" onClick={onClose}>
-          Done
         </button>
       </div>
     </div>
