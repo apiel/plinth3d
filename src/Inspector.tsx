@@ -1,3 +1,4 @@
+import { SWEEP_TYPES } from './geometry';
 import type { Layer, Shape, Vec3 } from './model';
 
 interface InspectorProps {
@@ -95,6 +96,24 @@ export function Inspector({
         <VectorRow label="Size (mm)" values={shape.size} onChange={(i, v) => setVector('size', i, v)} min={0.1} />
         <VectorRow label="Position (mm)" values={shape.position} onChange={(i, v) => setVector('position', i, v)} />
         <VectorRow label="Rotation (°)" values={shape.rotation} onChange={(i, v) => setVector('rotation', i, v)} />
+        {SWEEP_TYPES.includes(shape.type) && (
+          <label className="field">
+            <span>Sweep (°)</span>
+            <input
+              type="number"
+              min={1}
+              max={360}
+              step={1}
+              value={round(shape.sweep ?? 360)}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                if (e.target.value.trim() === '' || !Number.isFinite(value) || value <= 0) return;
+                // 360 is the whole shape, so it is stored as no sweep at all.
+                onChange(shape.id, { sweep: value >= 360 ? undefined : value });
+              }}
+            />
+          </label>
+        )}
         <div className="button-row">
           <button type="button" onClick={onDuplicate}>
             Duplicate

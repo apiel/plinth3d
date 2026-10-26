@@ -56,6 +56,7 @@ export function shapePosition(shape: Shape): Vector3 {
 export function localPrimitive(wasm: ManifoldToplevel, shape: Shape): Manifold {
   if (shape.type === 'mesh') return mergedGeometry(wasm, shape);
   if (shape.type === 'box' && shape.rounds?.length) return roundedBox(wasm, shape);
+  if (isPartialSweep(shape)) return sweptSolid(wasm, shape);
   let base: Manifold;
   switch (shape.type) {
     case 'box':
@@ -100,6 +101,41 @@ export function localPrimitive(wasm: ManifoldToplevel, shape: Shape): Manifold {
   }
   const sized = base.scale(shape.size);
   base.delete();
+  return sized;
+}
+
+/** Shapes that are a profile turned around the Y axis can be built over part of the turn. */
+export const SWEEP_TYPES: Shape['type'][] = ['cylinder', 'cone', 'torus'];
+
+function isPartialSweep(shape: Shape): boolean {
+  return SWEEP_TYPES.includes(shape.type) && shape.sweep !== undefined && shape.sweep > 0 && shape.sweep < 360;
+}
+
+/**
+ * A cylinder, cone or torus turned over only part of the circle: its profile revolved by `sweep`
+ * degrees, starting on the +X side. The bounding box stays that of the whole shape, so it resizes the same way.
+ */
+function sweptSolid(wasm: ManifoldToplevel, shape: Shape): Manifold {
+  const sweep = shape.sweep as number;
+  // Profile in (radius, height); revolving turns it around the vertical axis of the profile.
+  const profile =
+    shape.type === 'torus'
+      ? wasm.CrossSection.circle(0.2, 32).translate(0.3, 0)
+      : wasm.CrossSection.ofPolygons([
+          shape.type === 'cone'
+            ? [[0, -0.5], [0.5, -0.5], [0, 0.5]]
+            : [[0, -0.5], [0.5, -0.5], [0.5, 0.5], [0, 0.5]],
+        ]);
+  const segments = Math.max(3, Math.ceil((CYLINDER_SEGMENTS * sweep) / 360));
+  const revolved = wasm.Manifold.revolve(profile, segments, sweep);
+  profile.delete();
+  // Revolving puts the axis on Z; stand it along Y.
+  const upright = revolved.transform(toMat4(new Matrix4().makeRotationX(-Math.PI / 2)));
+  revolved.delete();
+  const flattened = shape.type === 'torus' ? upright.scale([1, 2.5, 1]) : upright;
+  if (flattened !== upright) upright.delete();
+  const sized = flattened.scale(shape.size);
+  flattened.delete();
   return sized;
 }
 

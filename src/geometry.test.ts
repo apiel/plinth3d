@@ -263,3 +263,33 @@ describe('modifiedStep', () => {
     expect(modifiedStep(0, keys, held(false, true))).toBe(0);
   });
 });
+
+describe('sweep', () => {
+  const volumeOf = async (type: Shape['type'], sweep?: number) => {
+    const wasm = await loadEngine();
+    const shape = createShape(type, 'layer', []);
+    shape.size = [20, 10, 20];
+    shape.sweep = sweep;
+    const part = localPrimitive(wasm, shape);
+    const volume = part.volume();
+    const box = part.boundingBox();
+    part.delete();
+    return { volume, box };
+  };
+
+  it.each(['cylinder', 'cone', 'torus'] as const)('builds half a %s with half the volume', async (type) => {
+    const whole = await volumeOf(type);
+    const half = await volumeOf(type, 180);
+    expect(half.volume / whole.volume).toBeCloseTo(0.5, 1);
+  });
+
+  it('builds a quarter and any other angle in proportion', async () => {
+    const whole = await volumeOf('cylinder');
+    expect((await volumeOf('cylinder', 90)).volume / whole.volume).toBeCloseTo(0.25, 1);
+    expect((await volumeOf('cylinder', 120)).volume / whole.volume).toBeCloseTo(1 / 3, 1);
+  });
+
+  it('keeps a full sweep identical to no sweep', async () => {
+    expect((await volumeOf('cylinder', 360)).volume).toBeCloseTo((await volumeOf('cylinder')).volume, 6);
+  });
+});

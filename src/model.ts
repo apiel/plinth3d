@@ -42,6 +42,8 @@ export interface Shape {
   sourcePosition?: Vec3;
   /** Boxes only: rounded edges. `edge` is the edge key used in the viewport, e.g. "2:1:-1". */
   rounds?: { edge: string; radius: number }[];
+  /** Cylinders, cones and tori only: how much of the turn is built, in degrees. Missing means all 360. */
+  sweep?: number;
 }
 
 export interface Project {
