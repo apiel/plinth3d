@@ -535,72 +535,18 @@ select {
   display: block;
 }
 
-/* Rounding modal, opened by clicking a highlighted edge or corner. */
-.round-modal {
-  position: fixed;
-  z-index: 10;
-  width: 220px;
-  padding: 10px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+/* Corners and edges section of the inspector. */
+.edges {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
-.mouse-menu {
-  position: relative;
-}
-
-.mouse-menu-card {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 10;
-  width: 220px;
-  padding: 10px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-  display: grid;
-  gap: 8px;
-}
-
-.mouse-menu-title {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.mouse-menu-row {
-  display: grid;
-  grid-template-columns: 56px 1fr;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.round-modal-title {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.round-modal-field {
+.edges .segmented {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
 }
 
-.round-modal-field input {
-  width: 90px;
-}
-
-.round-modal-actions {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
+.edges .segmented > button {
+  flex: 1;
 }
 
 /* Open / Save / Export sit at the top of the sidebar, out of the toolbar. */

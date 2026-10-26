@@ -40,8 +40,8 @@ export interface Shape {
   /** Merged shapes only: the shapes they were made from, and the point they were made around. */
   sources?: Shape[];
   sourcePosition?: Vec3;
-  /** Boxes only: rounded edges. `edge` is the edge key used in the viewport, e.g. "2:1:-1". */
-  rounds?: { edge: string; radius: number }[];
+  /** Boxes and cylinders: rounded or chamfered corners and edges, in mm. Vertical corners are for boxes only. */
+  edges?: { style: 'round' | 'chamfer'; vertical: number; top: number; bottom: number };
   /** Cylinders, cones and tori only: how much of the turn is built, in degrees. Missing means all 360. */
   sweep?: number;
 }

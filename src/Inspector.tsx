@@ -1,4 +1,4 @@
-import { SWEEP_TYPES } from './geometry';
+import { EDGE_TYPES, SWEEP_TYPES } from './geometry';
 import type { Layer, Shape, Vec3 } from './model';
 
 interface InspectorProps {
@@ -114,6 +114,7 @@ export function Inspector({
             />
           </label>
         )}
+        {EDGE_TYPES.includes(shape.type) && <EdgesSection shape={shape} onChange={onChange} />}
         <div className="button-row">
           <button type="button" onClick={onDuplicate}>
             Duplicate
@@ -124,6 +125,57 @@ export function Inspector({
         </div>
       </fieldset>
     </section>
+  );
+}
+
+type Edges = NonNullable<Shape['edges']>;
+
+/** Rounded or chamfered corners and edges. Zero everywhere means plain. */
+function EdgesSection({ shape, onChange }: { shape: Shape; onChange: (id: string, patch: Partial<Shape>) => void }) {
+  const edges: Edges = shape.edges ?? { style: 'round', vertical: 0, top: 0, bottom: 0 };
+  const set = (patch: Partial<Edges>) => {
+    const next = { ...edges, ...patch };
+    onChange(shape.id, { edges: next.vertical + next.top + next.bottom > 0 ? next : undefined });
+  };
+  const fields: [keyof Omit<Edges, 'style'>, string][] = [
+    ['vertical', 'Vertical corners'],
+    ['top', 'Top edge'],
+    ['bottom', 'Bottom edge'],
+  ];
+  return (
+    <div className="edges">
+      <span className="vector-label">Corners and edges</span>
+      <div className="segmented" role="group" aria-label="Edge style">
+        {(['round', 'chamfer'] as const).map((style) => (
+          <button
+            key={style}
+            type="button"
+            className={edges.style === style ? 'toggled' : ''}
+            onClick={() => set({ style })}
+          >
+            {style === 'round' ? 'Rounded' : 'Chamfered'}
+          </button>
+        ))}
+      </div>
+      {fields
+        .filter(([key]) => key !== 'vertical' || shape.type === 'box')
+        .map(([key, label]) => (
+          <label key={key} className="field">
+            <span>{label}</span>
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              value={round(edges[key])}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                if (e.target.value.trim() === '' || !Number.isFinite(value) || value < 0) return;
+                set({ [key]: value });
+              }}
+            />
+          </label>
+        ))}
+    </div>
   );
 }
 

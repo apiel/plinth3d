@@ -43,7 +43,6 @@ import {
   type Vec3,
 } from './model';
 import { addLayerFromFile, parseLayer, serializeLayer } from './model';
-import { RoundModal } from './RoundModal';
 import { DEFAULT_MOUSE_MAP, DEFAULT_STEP_KEYS, SettingsMenu, type MouseMap, type StepKeys } from './SettingsMenu';
 import { encodeBinarySTL, loadEngine, mergeShapes, modifiedStep, restoreSources, resizeAlongAxis, resultMesh } from './geometry';
 
@@ -99,7 +98,7 @@ function loadStepKeys(): StepKeys {
   try {
     const saved = JSON.parse(localStorage.getItem(STEP_KEYS_KEY) ?? 'null');
     if (saved && Number.isFinite(saved.ctrl) && Number.isFinite(saved.shift)) {
-      const alt = saved.alt === 'round' || Number.isFinite(saved.alt) ? saved.alt : DEFAULT_STEP_KEYS.alt;
+      const alt = Number.isFinite(saved.alt) ? saved.alt : DEFAULT_STEP_KEYS.alt;
       return { ctrl: saved.ctrl, shift: saved.shift, alt };
     }
   } catch {
@@ -141,12 +140,6 @@ export default function App() {
   const [showResult, setShowResult] = useState(false);
   const [engine, setEngine] = useState<ManifoldToplevel | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  // An edge or corner clicked on an unselected box. Opens the rounding modal.
-  // Round mode: edges and corners open the rounding modal. Otherwise edges resize.
-  const [roundMode, setRoundMode] = useState(false);
-  // Holding Alt flips round mode for as long as it is held.
-  const [altHeld, setAltHeld] = useState(false);
-  const [roundTarget, setRoundTarget] = useState<{ shapeId: string; key: string; x: number; y: number } | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [mouseMap, setMouseMap] = useState<MouseMap>(loadMouseMap);
   const [stepKeys, setStepKeys] = useState<StepKeys>(loadStepKeys);
@@ -292,35 +285,19 @@ export default function App() {
     }));
   };
 
-  const openRound = (shapeId: string, key: string, x: number, y: number) => {
-    setRoundTarget({ shapeId, key, x, y });
-  };
-
-  // Sets the radius of one rounded edge or corner. Zero makes it square again.
-  const setRound = (shapeId: string, key: string, radius: number) => {
-    const shape = project.shapes.find((s) => s.id === shapeId);
-    if (!shape) return;
-    const keys = [key];
-    const others = (shape.rounds ?? []).filter((r) => !keys.includes(r.edge));
-    updateShape(shapeId, {
-      rounds: radius > 0 ? [...others, ...keys.map((edge) => ({ edge, radius }))] : others,
-    });
-  };
-
   const toggleTheme = () => setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
 
   const selectionLocked = selectedShapes.some((s) => layerOf(s.layerId)?.locked);
 
   // Arrow keys nudge the selection like Tinkercad: on the ground, relative to the
-  // view. Up moves away from the camera, snapped to the nearest axis. With Ctrl, the arrows follow the drag plane instead. One snap step, scaled by the Shift key's setting, the Alt key's setting (a tenth while Alt flips round mode).
+  // view. Up moves away from the camera, snapped to the nearest axis. With Ctrl, the arrows follow the drag plane instead. One snap step, scaled by the Shift key's setting, and the Alt key's setting.
   const nudgeSelected = (right: number, forward: number, event: KeyboardEvent) => {
     const movable = selectedShapes.filter((s) => !layerOf(s.layerId)?.locked);
     if (movable.length === 0) return;
     const base = snap > 0 ? snap : 1;
-    // The same modifier factors as a drag. Alt falls back to a tenth while it flips round mode.
-    const keys = { ...stepKeys, alt: typeof stepKeys.alt === 'number' ? stepKeys.alt : 0.1 };
+    // The same modifier factors as a drag.
     const step =
-      modifiedStep(base, keys, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey, alt: event.altKey }) || base;
+      modifiedStep(base, stepKeys, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey, alt: event.altKey }) || base;
     const delta: Vec3 = [0, 0, 0];
     const [fx, fz] = viewDir.current;
     if ((event.ctrlKey || event.metaKey) && dragPlane !== 'XZ') {
@@ -517,19 +494,14 @@ export default function App() {
 
   useEffect(() => {
     const track = (event: KeyboardEvent) => {
-      if (event.key !== 'Alt') return;
       // Without this, Alt can focus the browser menu and swallow the next click.
-      event.preventDefault();
-      setAltHeld(event.type === 'keydown' && stepKeysRef.current.alt === 'round');
+      if (event.key === 'Alt') event.preventDefault();
     };
-    const release = () => setAltHeld(false);
     window.addEventListener('keydown', track);
     window.addEventListener('keyup', track);
-    window.addEventListener('blur', release);
     return () => {
       window.removeEventListener('keydown', track);
       window.removeEventListener('keyup', track);
-      window.removeEventListener('blur', release);
     };
   }, []);
 
@@ -565,9 +537,6 @@ export default function App() {
         setGizmoMode('translate');
       } else if (plain && (key === 'r' || key === 'e')) {
         setGizmoMode('rotate');
-      } else if (plain && key === 'f') {
-        setRoundMode((on) => !on);
-        setRoundTarget(null);
       } else if (plain && key === 'g') {
         mergeSelected();
       } else if (plain && key === 'u') {
@@ -591,7 +560,6 @@ export default function App() {
       } else if (event.key === 'Escape') {
         setSelection([]);
         setReadout(null);
-        setRoundTarget(null);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -639,21 +607,6 @@ export default function App() {
           >
             <Label text="Rotate" at={0} />
             <KeyHint k="R" />
-          </button>
-        </div>
-        <div className="group">
-          <button
-            type="button"
-            className={roundMode ? 'toggled' : ''}
-            onClick={() => {
-              setRoundMode(!roundMode);
-              setRoundTarget(null);
-            }}
-            aria-pressed={roundMode}
-            title="Round mode: click an edge or corner to round it (F, or hold Alt)"
-          >
-            <Label text="Round" at={0} />
-            <KeyHint k="F" />
           </button>
         </div>
         <div className="group segmented" role="group" aria-label="Drag plane">
@@ -852,10 +805,8 @@ export default function App() {
           snap={snap}
           viewDirRef={viewDir}
           readout={readout}
-          roundMode={roundMode !== altHeld}
           mouseMap={mouseMap}
           stepKeys={stepKeys}
-          onRoundClick={openRound}
           onMarquee={(ids) => setSelection([...selection.filter((x) => !ids.includes(x)), ...ids])}
           onShapeLive={shapeLive}
         />
@@ -864,21 +815,6 @@ export default function App() {
           {notice && <span className="notice">{notice}</span>}
         </footer>
       </main>
-
-      {roundTarget && (() => {
-        const shape = project.shapes.find((s) => s.id === roundTarget.shapeId);
-        if (!shape) return null;
-        return (
-          <RoundModal
-            shape={shape}
-            roundKey={roundTarget.key}
-            x={roundTarget.x}
-            y={roundTarget.y}
-            onApply={(radius) => setRound(shape.id, roundTarget.key, radius)}
-            onClose={() => setRoundTarget(null)}
-          />
-        );
-      })()}
 
       <aside className="inspector">
         <Inspector

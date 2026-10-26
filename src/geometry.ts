@@ -8,8 +8,6 @@ import Module, { type Manifold, type ManifoldToplevel, type Mat4 } from 'manifol
 import manifoldWasmUrl from 'manifold-3d/manifold.wasm?url';
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { createId, type MeshGeometry, type Shape, type Vec3 } from './model';
-import { roundedBoxSdf } from './roundedSdf';
-import { polygonizeNearSurface } from './sparseMarching';
 
 const DEG_TO_RAD = Math.PI / 180;
 const CYLINDER_SEGMENTS = 64;
@@ -55,7 +53,7 @@ export function shapePosition(shape: Shape): Vector3 {
  */
 export function localPrimitive(wasm: ManifoldToplevel, shape: Shape): Manifold {
   if (shape.type === 'mesh') return mergedGeometry(wasm, shape);
-  if (shape.type === 'box' && shape.rounds?.length) return roundedBox(wasm, shape);
+  if (hasEdges(shape)) return edgedSolid(wasm, shape, shape.edges!);
   if (isPartialSweep(shape)) return sweptSolid(wasm, shape);
   let base: Manifold;
   switch (shape.type) {
@@ -102,6 +100,14 @@ export function localPrimitive(wasm: ManifoldToplevel, shape: Shape): Manifold {
   const sized = base.scale(shape.size);
   base.delete();
   return sized;
+}
+
+/** Boxes and cylinders (whole ones) can have their edges rounded or chamfered. */
+export const EDGE_TYPES: Shape['type'][] = ['box', 'cylinder'];
+
+function hasEdges(shape: Shape): boolean {
+  const e = shape.edges;
+  return !!e && EDGE_TYPES.includes(shape.type) && !isPartialSweep(shape) && e.vertical + e.top + e.bottom > 0;
 }
 
 /** Shapes that are a profile turned around the Y axis can be built over part of the turn. */
@@ -339,12 +345,11 @@ export function snapTo(value: number, step: number): number {
  */
 export function modifiedStep(
   base: number,
-  keys: { ctrl: number; shift: number; alt: number | 'round' },
+  keys: { ctrl: number; shift: number; alt: number },
   held: { ctrl: boolean; shift: boolean; alt?: boolean },
 ): number {
   if (base <= 0) return 0;
-  const alt = typeof keys.alt === 'number' ? keys.alt : 1;
-  return base * (held.ctrl ? keys.ctrl : 1) * (held.shift ? keys.shift : 1) * (held.alt ? alt : 1);
+  return base * (held.ctrl ? keys.ctrl : 1) * (held.shift ? keys.shift : 1) * (held.alt ? keys.alt : 1);
 }
 
 /**
@@ -399,58 +404,63 @@ function mapShape(shape: Shape, frame: Frame): Shape {
   };
 }
 
-/** Blend radius where rounded edges and corners meet, in mm. */
-const SDF_BLEND = 1;
-/** Size of one voxel in the rounded box's grid, in mm. */
-const SDF_VOXEL = 0.1;
-/** Most cells across the rounded box's grid, to keep building it quick. */
-const SDF_MAX_CELLS = 300;
+/** Slices along each rounded edge; a chamfer needs only its two ends. */
+const EDGE_STEPS = 8;
 
-/**
- * A box with some edges and corners rounded. The shape is a distance field (see roundedSdf.ts),
- * turned into a mesh and then into a solid. Sizes are in mm; the box is centred on the origin.
- */
-const ROUNDED_BOX_CACHE_SIZE = 6;
-const roundedBoxCache = new Map<string, Manifold>();
-
-/**
- * A box with some edges and corners rounded. Building it is slow, and the viewport asks for every
- * shape again each time the selection changes, so the solid is cached. The cache keeps its own copy,
- * and the caller gets a copy it owns.
- */
-function roundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
-  const key = JSON.stringify({ size: shape.size, rounds: shape.rounds ?? [] });
-  const cached = roundedBoxCache.get(key);
-  if (cached) {
-    // Most recently used goes last, so the oldest is evicted first.
-    roundedBoxCache.delete(key);
-    roundedBoxCache.set(key, cached);
-    return cached.translate(0, 0, 0);
-  }
-  const built = buildRoundedBox(wasm, shape);
-  roundedBoxCache.set(key, built.translate(0, 0, 0));
-  if (roundedBoxCache.size > ROUNDED_BOX_CACHE_SIZE) {
-    const [oldest, manifold] = roundedBoxCache.entries().next().value as [string, Manifold];
-    manifold.delete();
-    roundedBoxCache.delete(oldest);
-  }
-  return built;
+/** How far a slice at `t` mm from the face sits in from the outline, for an edge of radius `r`. */
+function edgeInset(style: 'round' | 'chamfer', r: number, t: number): number {
+  if (style === 'chamfer') return r - t;
+  return r - Math.sqrt(Math.max(r * r - (r - t) * (r - t), 0));
 }
 
-function buildRoundedBox(wasm: ManifoldToplevel, shape: Shape): Manifold {
-  // The blend never exceeds half the smallest radius, so a small round is not blurred away.
-  const radii = (shape.rounds ?? []).map((r) => r.radius);
-  const blend = Math.min(SDF_BLEND, radii.length > 0 ? Math.min(...radii) / 2 : SDF_BLEND);
-  const distance = roundedBoxSdf(shape.size, shape.rounds ?? [], blend);
-  // A margin around the box, so the grid always closes the surface.
-  const room = shape.size.map((v) => v / 2 + 1) as [number, number, number];
-  // A coarser grid for big boxes keeps the build quick.
-  const voxel = Math.max(SDF_VOXEL, (2 * Math.max(...room)) / SDF_MAX_CELLS);
-  const { vertices, triangles } = polygonizeNearSurface(distance, room, voxel);
-  const mesh = new wasm.Manifold(new wasm.Mesh({ numProp: 3, vertProperties: vertices, triVerts: triangles }));
-  // The grid cuts flat faces into tiny triangles. Merge them back, moving the surface by under a
-  // quarter of a voxel.
-  const simple = mesh.simplify(voxel / 4);
-  mesh.delete();
-  return simple;
+/** Heights (from the face) and insets of the slices that make one edge. */
+function edgeSlices(style: 'round' | 'chamfer', r: number): { t: number; inset: number }[] {
+  if (r <= 0) return [{ t: 0, inset: 0 }];
+  const steps = style === 'chamfer' ? 1 : EDGE_STEPS;
+  const slices = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = (r * i) / steps;
+    slices.push({ t, inset: edgeInset(style, r, t) });
+  }
+  return slices;
+}
+
+/**
+ * A box or cylinder with its vertical corners, top edge and bottom edge rounded or chamfered. The
+ * solid is convex, so it is the hull of a handful of outlines stacked at different heights. Sizes
+ * are in mm; the shape is centred on the origin, standing along Y.
+ */
+function edgedSolid(wasm: ManifoldToplevel, shape: Shape, edges: NonNullable<Shape['edges']>): Manifold {
+  const [w, h, d] = shape.size;
+  const isBox = shape.type === 'box';
+  const maxR = Math.min(w, d) / 2;
+  const vertical = isBox ? Math.min(Math.max(edges.vertical, 0), maxR) : 0;
+  const top = Math.min(Math.max(edges.top, 0), maxR, h);
+  const bottom = Math.min(Math.max(edges.bottom, 0), maxR, h - top);
+
+  const outline = (inset: number): [number, number][] => {
+    const rw = w / 2 - inset;
+    const rd = d / 2 - inset;
+    if (!isBox) {
+      const circle = wasm.CrossSection.circle(1, CYLINDER_SEGMENTS).scale([rw, rd]);
+      const points = circle.toPolygons()[0] as [number, number][];
+      circle.delete();
+      return points;
+    }
+    const corner = Math.max(vertical - inset, 0);
+    const core = wasm.CrossSection.square([2 * (rw - corner), 2 * (rd - corner)], true);
+    const grown = corner > 0 ? core.offset(corner, 'Round', 2, CYLINDER_SEGMENTS / 4) : core;
+    const points = grown.toPolygons()[0] as [number, number][];
+    if (grown !== core) grown.delete();
+    core.delete();
+    return points;
+  };
+
+  const points: [number, number, number][] = [];
+  const add = (y: number, inset: number) => {
+    for (const [x, z] of outline(Math.max(inset, 0))) points.push([x, y, z]);
+  };
+  for (const { t, inset } of edgeSlices(edges.style, top)) add(h / 2 - t, inset);
+  for (const { t, inset } of edgeSlices(edges.style, bottom)) add(-h / 2 + t, inset);
+  return wasm.Manifold.hull(points);
 }

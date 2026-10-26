@@ -25,13 +25,9 @@ Mark a shape as a hole, select it together with a solid, and press **Merge** (`G
 
 ![A block with a bore and a slot cut out of it](docs/screenshots/holes.png)
 
-### Round edges and corners, sanded smooth
+### Round or chamfer corners and edges
 
-With a box not selected, hover an edge or a corner. It lights up. Click it and set the radius in the small window that opens; the shape updates as you type. Zero makes it square again.
-
-Edges and corners are blended where they meet, the way a piece of wood looks after you sand the edge and then work the corner a bit more.
-
-![A block with rounded corners and one rounded edge](docs/screenshots/rounded.png)
+Select a box or cylinder and use **Corners and edges** in the properties panel: pick rounded or chamfered, then type a size for the vertical corners (boxes), the top edge and the bottom edge. Zero is square.
 
 ### Light and dark
 
@@ -43,7 +39,7 @@ Switch themes from the toolbar. Your choice is remembered.
 
 **Shapes**
 - Box, cylinder, sphere, cone, pyramid, wedge and torus. Click an icon in the toolbar to add one to the plan; it is selected straight away.
-- Round the edges and corners of a box (see above).
+- Round or chamfer the vertical corners, top edge and bottom edge of a box or cylinder (see above).
 - Merge shapes into one object, and unmerge them again.
 - Holes: a shape marked as a hole is subtracted from the solids it is merged with.
 
@@ -99,8 +95,7 @@ The shortcut letter is underlined in each label, and icon buttons show it in the
 ## How it works
 
 - The editor is React and three.js. The geometry (merging, holes, the STL result) uses the [Manifold](https://github.com/elalish/manifold) engine, compiled to WebAssembly.
-- Rounded boxes are described as a signed distance field ([`src/roundedSdf.ts`](src/roundedSdf.ts)), turned into a mesh by a marching-cubes pass that only looks near the surface ([`src/sparseMarching.ts`](src/sparseMarching.ts)), and then simplified so flat faces stay as a few triangles. Each rounded edge and corner is one term of the field, and the terms are blended with a smooth maximum, which is what gives the sanded look.
-- A rounded box takes about a second to build the first time. The result is cached, so selecting and moving shapes stays instant.
+- Rounded and chamfered shapes are the convex hull of a few outlines stacked at different heights (`edgedSolid` in [`src/geometry.ts`](src/geometry.ts)), which Manifold builds in milliseconds.
 
 ## Project file format
 
@@ -116,7 +111,7 @@ Projects are plain JSON, so they are easy to diff and version-control:
       "id": "...", "name": "Box 1", "type": "box", "layerId": "...",
       "position": [0, 10, 0], "rotation": [0, 0, 0], "size": [20, 20, 20],
       "color": "#4f8cff", "hole": false,
-      "rounds": [{ "edge": "2:1:1", "radius": 2 }, { "edge": "c:1:1:1", "radius": 5 }]
+      "edges": { "style": "round", "vertical": 4, "top": 2, "bottom": 0 }
     }
   ]
 }
@@ -124,13 +119,12 @@ Projects are plain JSON, so they are easy to diff and version-control:
 
 Units are millimetres. Rotations are degrees, applied in XYZ order. The app's Y axis is up.
 
-`rounds` is optional. An edge key is `along:signA:signB`: the axis the edge runs along (0 = X, 1 = Y, 2 = Z) and which side of the other two axes it sits on. A corner key is `c:sx:sy:sz`, with each sign `1` or `-1`.
+`edges` is optional and applies to boxes and cylinders. `style` is `round` or `chamfer`; the other three are sizes in mm (`vertical` is for boxes only).
 
 ## Roadmap
 
 - Save and load projects to a GitHub repository, so each user can keep their designs in their own repo.
 - More primitives and shape editing (for example, text).
-- Faster first build of rounded boxes with many rounds.
 
 ## Licence
 

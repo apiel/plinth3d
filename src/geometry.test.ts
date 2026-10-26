@@ -143,110 +143,62 @@ describe('primitives', () => {
 });
 
 describe('rounded edges', () => {
-  it('rounds one edge of a box by the quarter-round it removes', async () => {
-    const wasm = await loadEngine();
+  const boxWith = (edges: Shape['edges']) => {
     const shape = createShape('box', createProject().layers[0].id, []);
     shape.size = [20, 20, 20];
-    // The edge along Z (axis 2) at +X, +Y, with radius 5.
-    shape.rounds = [{ edge: '2:1:1', radius: 5 }];
-    const rounded = localPrimitive(wasm, shape);
-    // Each rounded edge removes r^2 - pi r^2 / 4 from the square section, along its 20 mm length.
-    const removed = (25 - (Math.PI * 25) / 4) * 20;
-    expect(Math.abs(rounded.volume() - (8000 - removed)) / 8000).toBeLessThan(0.01);
+    shape.edges = edges;
+    return shape;
+  };
+
+  it('rounds the top edge by the quarter-rounds it removes', async () => {
+    const wasm = await loadEngine();
+    const rounded = localPrimitive(wasm, boxWith({ style: 'round', vertical: 0, top: 5, bottom: 0 }));
+    // The quarter-round removes 25 - pi * 25 / 4 mm2 of section, swept round a perimeter of about 72 mm (the centroid's).
+    const removed = (25 - (Math.PI * 25) / 4) * 72;
+    expect(Math.abs(rounded.volume() - (8000 - removed)) / removed).toBeLessThan(0.1);
     rounded.delete();
   });
 
-  it('leaves a box alone when no edge is rounded', async () => {
+  it('chamfers the top and bottom edges', async () => {
     const wasm = await loadEngine();
-    const shape = createShape('box', createProject().layers[0].id, []);
-    shape.size = [20, 20, 20];
-    const box = localPrimitive(wasm, shape);
+    const chamfered = localPrimitive(wasm, boxWith({ style: 'chamfer', vertical: 0, top: 2, bottom: 2 }));
+    // A frustum of 20 -> 16 over 2 mm, twice, around a 16 mm tall 20 x 20 block.
+    const frustum = (2 / 3) * (400 + 256 + 20 * 16);
+    expect(chamfered.volume()).toBeCloseTo(20 * 20 * 16 + 2 * frustum, 1);
+    chamfered.delete();
+  });
+
+  it('rounds the vertical corners like a rounded rectangle', async () => {
+    const wasm = await loadEngine();
+    const rounded = localPrimitive(wasm, boxWith({ style: 'round', vertical: 4, top: 0, bottom: 0 }));
+    const area = 400 - 4 * (16 - 4 * Math.PI);
+    expect(Math.abs(rounded.volume() - area * 20) / 8000).toBeLessThan(0.01);
+    rounded.delete();
+  });
+
+  it('rounds the edges of a cylinder', async () => {
+    const wasm = await loadEngine();
+    const shape = createShape('cylinder', createProject().layers[0].id, []);
+    shape.size = [20, 30, 20];
+    shape.edges = { style: 'round', vertical: 0, top: 3, bottom: 0 };
+    const rounded = localPrimitive(wasm, shape);
+    const plain = Math.PI * 100 * 30;
+    expect(rounded.volume()).toBeLessThan(plain);
+    expect(rounded.volume()).toBeGreaterThan(plain * 0.95);
+    rounded.delete();
+  });
+
+  it('leaves a box alone when nothing is rounded', async () => {
+    const wasm = await loadEngine();
+    const box = localPrimitive(wasm, boxWith({ style: 'round', vertical: 0, top: 0, bottom: 0 }));
     expect(box.volume()).toBeCloseTo(8000, 2);
     box.delete();
   });
 });
 
 
-
-describe('edge and corner meeting', () => {
-  it('keeps each edge at its own radius, even next to a rounded corner', async () => {
-    const wasm = await loadEngine();
-    const make = (edgeRadius: number) => {
-      const shape = createShape('box', createProject().layers[0].id, []);
-      shape.size = [20, 20, 20];
-      shape.rounds = [
-        { edge: '2:1:1', radius: edgeRadius },
-        { edge: 'c:1:1:1', radius: 6 },
-      ];
-      return localPrimitive(wasm, shape);
-    };
-    const mismatched = make(4);
-    const matched = make(6);
-    expect(Math.abs(mismatched.volume() - matched.volume())).toBeGreaterThan(1);
-    mismatched.delete();
-    matched.delete();
-  });
-
-  it('runs a 3 mm edge at full depth into 5 mm corners, as one valid solid', async () => {
-    const wasm = await loadEngine();
-    const corners = [-1, 1].flatMap((x) =>
-      [-1, 1].flatMap((y) => [-1, 1].map((z) => ({ edge: `c:${x}:${y}:${z}`, radius: 5 }))),
-    );
-    const make = (rounds: Shape['rounds']) => {
-      const shape = createShape('box', createProject().layers[0].id, []);
-      shape.size = [20, 20, 20];
-      shape.rounds = rounds;
-      return localPrimitive(wasm, shape);
-    };
-    const edge = { edge: '0:1:1', radius: 3 };
-    const edgeOnly = make([edge]);
-    const cornersOnly = make(corners);
-    const both = make([...corners, edge]);
-    // The edge takes its full cut between the corners: nearly all of what it removes on its own
-    // (only the ends, where the corners already cut, overlap).
-    const edgeCut = 8000 - edgeOnly.volume();
-    const addedByEdge = cornersOnly.volume() - both.volume();
-    expect(addedByEdge).toBeGreaterThan(edgeCut * 0.6);
-    expect(addedByEdge).toBeLessThan(edgeCut * 1.05);
-    expect(both.status()).toBe('NoError');
-    edgeOnly.delete();
-    cornersOnly.delete();
-    both.delete();
-  });
-
-  it('meets two rounded edges that share a corner in a mitre, not a bulge', async () => {
-    const wasm = await loadEngine();
-    const shape = createShape('box', createProject().layers[0].id, []);
-    shape.size = [20, 20, 20];
-    // The edges along Z and along X, both at the top +X+Y+Z corner, with radius 5.
-    shape.rounds = [
-      { edge: '2:1:1', radius: 5 },
-      { edge: '0:1:1', radius: 5 },
-    ];
-    const rounded = localPrimitive(wasm, shape);
-    // Each edge removes the corner square minus its quarter-round; where they meet the removals overlap.
-    // The ideal volume of the mitred result is about 7797.5 mm³.
-    expect(Math.abs(rounded.volume() - 7797.5) / 7797.5).toBeLessThan(0.005);
-    rounded.delete();
-  });
-});
-
-describe('rounded corner alone', () => {
-  it('takes a bit off the corner and keeps the rest of the box', async () => {
-    const wasm = await loadEngine();
-    const shape = createShape('box', createProject().layers[0].id, []);
-    shape.size = [20, 20, 20];
-    shape.rounds = [{ edge: 'c:1:1:1', radius: 6 }];
-    const rounded = localPrimitive(wasm, shape);
-    // More than the corner cube's volume is kept, less than the whole box.
-    expect(rounded.volume()).toBeLessThan(8000);
-    expect(rounded.volume()).toBeGreaterThan(8000 - 216);
-    rounded.delete();
-  });
-});
-
 describe('modifiedStep', () => {
-  const keys = { ctrl: 0.5, shift: 5, alt: 'round' as number | 'round' };
+  const keys = { ctrl: 0.5, shift: 5, alt: 1 };
   const held = (ctrl: boolean, shift: boolean, alt = false) => ({ ctrl, shift, alt });
   it('scales the step by the held keys', () => {
     expect(modifiedStep(1, keys, held(false, false))).toBe(1);
