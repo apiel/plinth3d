@@ -426,9 +426,9 @@ export function Viewport(props: ViewportProps) {
     };
 
     // The rim of a face under the pointer, unless another shape is in front of it.
-    // The gizmo's arrows win where they overlap the face.
+    // The gizmo wins where it overlaps the face: its arrows, and the centre where they meet, which moves the shape.
     const pickHandle = (): Intersection | undefined => {
-      if (transform.axis !== null && transform.axis !== 'XYZ') return undefined;
+      if (transform.axis !== null) return undefined;
       const handle = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false).find(inRim);
       if (!handle) return undefined;
       const body = raycaster
@@ -511,7 +511,7 @@ export function Viewport(props: ViewportProps) {
       pressedShape = null;
       aim(event);
 
-      // Face handles win over the move arrows, which can sit on the same spot.
+      // A face rim is grabbed unless the gizmo is under the pointer (see pickHandle).
       const handle = pickHandle();
       if (handle) {
         event.stopImmediatePropagation();

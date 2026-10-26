@@ -1,1 +1,0 @@
-For rotation, we need to be able to do big step rotation like thinkercad does, maybe using shift?
