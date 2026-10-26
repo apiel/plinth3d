@@ -668,6 +668,7 @@ export function Viewport(props: ViewportProps) {
       }
       if (!drag) {
         // Hover highlight on the face handles, and on rounding targets.
+        trackCursor(event);
         aim(event);
         roundHover = findRoundTarget(event);
         const hovered = pickHandle();

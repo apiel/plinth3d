@@ -45,7 +45,7 @@ import {
 import { addLayerFromFile, parseLayer, serializeLayer } from './model';
 import { RoundModal } from './RoundModal';
 import { DEFAULT_MOUSE_MAP, DEFAULT_STEP_KEYS, SettingsMenu, type MouseMap, type StepKeys } from './SettingsMenu';
-import { encodeBinarySTL, loadEngine, mergeShapes, restoreSources, resizeAlongAxis, resultMesh } from './geometry';
+import { encodeBinarySTL, loadEngine, mergeShapes, modifiedStep, restoreSources, resizeAlongAxis, resultMesh } from './geometry';
 
 const AUTOSAVE_KEY = 'plinth3d:autosave';
 const HISTORY_LIMIT = 100;
@@ -312,18 +312,23 @@ export default function App() {
   const selectionLocked = selectedShapes.some((s) => layerOf(s.layerId)?.locked);
 
   // Arrow keys nudge the selection like Tinkercad: on the ground, relative to the
-  // view. Up moves away from the camera, snapped to the nearest axis. Ctrl + up or
-  // down moves the shape up or down. One snap step, scaled by the Shift key's setting, the Alt key's setting (a tenth while Alt flips round mode).
+  // view. Up moves away from the camera, snapped to the nearest axis. With Ctrl, the arrows follow the drag plane instead. One snap step, scaled by the Shift key's setting, the Alt key's setting (a tenth while Alt flips round mode).
   const nudgeSelected = (right: number, forward: number, event: KeyboardEvent) => {
     const movable = selectedShapes.filter((s) => !layerOf(s.layerId)?.locked);
     if (movable.length === 0) return;
     const base = snap > 0 ? snap : 1;
-    const step = event.shiftKey ? base * stepKeys.shift : event.altKey ? base * (typeof stepKeys.alt === 'number' ? stepKeys.alt : 0.1) : base;
+    // The same modifier factors as a drag. Alt falls back to a tenth while it flips round mode.
+    const keys = { ...stepKeys, alt: typeof stepKeys.alt === 'number' ? stepKeys.alt : 0.1 };
+    const step =
+      modifiedStep(base, keys, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey, alt: event.altKey }) || base;
     const delta: Vec3 = [0, 0, 0];
     const [fx, fz] = viewDir.current;
-    if (event.ctrlKey || event.metaKey) {
+    if ((event.ctrlKey || event.metaKey) && dragPlane !== 'XZ') {
+      // Follows the drag plane: left and right along its horizontal axis (the one facing the camera's side), up and down along Y.
+      const across = dragPlane === 'XY' ? 0 : 2;
+      const sideways = across === 0 ? -fz : fx;
+      delta[across] = right * (sideways < 0 ? -1 : 1) * step;
       delta[1] = forward * step;
-      if (right !== 0) return;
     } else if (Math.abs(fx) >= Math.abs(fz)) {
       const sign = Math.sign(fx);
       delta[0] = forward * sign * step;
@@ -341,7 +346,20 @@ export default function App() {
         ids.includes(s.id) ? { ...s, position: s.position.map((v, i) => round(v + delta[i])) as Vec3 } : s,
       ),
     });
-    setReadout(null);
+    // Show the move like a drag does: the distance from where the keys started moving it.
+    const primary = movable.find((s) => s.id === selectedId);
+    if (primary && selection.length === 1) {
+      const moved = [0, 1, 2].filter((i) => delta[i] !== 0);
+      const previous = readout?.kind === 'move' && readout.id === primary.id ? readout : null;
+      setReadout({
+        id: primary.id,
+        kind: 'move',
+        axes: previous ? [...new Set([...previous.axes, ...moved])].sort() : moved,
+        start: previous ? previous.start : [...primary.position],
+      });
+    } else {
+      setReadout(null);
+    }
   };
 
   // Clone the selection.
