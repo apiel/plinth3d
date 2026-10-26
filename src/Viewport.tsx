@@ -492,7 +492,7 @@ export function Viewport(props: ViewportProps) {
     const shapeById = (id: string) => handlersRef.current.shapes.find((s) => s.id === id);
     const isLocked = (shape: Shape) => handlersRef.current.layers.find((l) => l.id === shape.layerId)?.locked ?? false;
 
-    // The face of the selected shape under the pointer, unless another shape is in front of it.
+    // The face of a shape under the pointer, unless another shape is in front of it.
     // The gizmo's arrows win where they overlap the face.
     const pickHandle = (): Intersection | undefined => {
       if (transform.axis !== null && transform.axis !== 'XYZ') return undefined;
@@ -512,6 +512,8 @@ export function Viewport(props: ViewportProps) {
       const id = group.userData.shapeId as string;
       const shape = shapeById(id);
       if (!shape) return;
+      // The readout belongs to the selected shape, so a face of any other shape selects it first.
+      if (handlersRef.current.selection.length !== 1 || handlersRef.current.selection[0] !== id) handlersRef.current.onSelect(id, false);
 
       const dir = new Vector3().setComponent(side.axis, 1).applyQuaternion(group.quaternion);
       // A plane through the pointer that holds the face's direction and faces the camera, so the mouse moves the face.
@@ -834,8 +836,8 @@ export function Viewport(props: ViewportProps) {
         group.add(boundingBox(shape.size, THEMES[theme].outline));
         if (!multi) transform.attach(group);
       }
-      // The faces of the selected shape resize it. Round mode uses the edges for rounding instead.
-      if (unlocked && !multi && selectedSet.has(shape.id) && !props.roundMode) {
+      // The faces of any shape resize it, selected or not. Round mode uses the edges for rounding instead.
+      if (unlocked && !inPivot && !props.roundMode) {
         for (const handle of makeFaces(shape.size)) {
           group.add(handle);
           view.handles.push(handle);
