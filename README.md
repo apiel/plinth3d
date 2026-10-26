@@ -12,7 +12,7 @@ Everything runs in your browser: there is no server and no account.
 
 ## Why Plinth3D
 
-- **Simple.** Add shapes with one click, move them with arrows, resize them by dragging an edge, or type exact millimetres.
+- **Simple.** Add shapes with one click, move them with arrows, resize them by dragging a face, or type exact millimetres.
 - **Made for printing.** Units are millimetres, exports are binary STL in Z-up for slicers, and holes are real cuts.
 - **Layers, like Photoshop.** Show, hide, lock and rename layers. Export a layer and import it into another project.
 - **Private.** Your projects stay in your browser and in `.json` files you save yourself.

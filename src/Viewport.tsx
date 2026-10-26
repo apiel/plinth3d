@@ -60,8 +60,8 @@ const CORNER_PICK_PX = 11;
 /** Orange stands out on the blue shapes. */
 const ARROW_COLOR = 0xff8a00;
 const DRAG_THRESHOLD = 3;
-/** Width of an edge grab as a fraction of the camera distance, so it is easy to hit on screen. */
-const EDGE_SCREEN_SCALE = 0.012;
+/** Thickness of a face grab, in mm. */
+const FACE_THICKNESS = 0.01;
 
 export type Theme = 'dark' | 'light';
 
@@ -136,11 +136,8 @@ type Drag = {
       id: string;
       plane: Plane;
       startHit: Vector3;
-      // The two faces this edge moves: each with its sign and its world direction.
-      // The edge's two faces, and the one a drag moves. A plain click switches to the other face.
-      sides: { axis: number; sign: number }[];
-      activeIndex: number;
-      edgeKey: string;
+      // The face being dragged: its axis, its sign and its world direction.
+      side: { axis: number; sign: number };
       faces: { axis: number; sign: number; dir: Vector3 }[];
       startShape: Shape;
     }
@@ -405,10 +402,8 @@ export function Viewport(props: ViewportProps) {
       return cornerHit ?? edgeHit;
     };
 
-    // Which of the two faces each edge drags, switched by clicking the edge.
-    const edgeChoice = new Map<string, number>();
-    // The edge under the pointer. Its active face gets the resize arrow.
-    let hintEdge: { shapeId: string; edgeKey: string; sides: { axis: number; sign: number }[] } | null = null;
+    // The face under the pointer. It gets the resize arrow.
+    let hintFace: { shapeId: string; side: { axis: number; sign: number } } | null = null;
     const arrow = new ArrowHelper(new Vector3(1, 0, 0), new Vector3(), 10, ARROW_COLOR);
     arrow.visible = false;
     arrow.renderOrder = 20;
@@ -416,28 +411,20 @@ export function Viewport(props: ViewportProps) {
     (arrow.cone.material as MeshBasicMaterial).depthTest = false;
     scene.add(arrow);
 
-    // Points the arrow along the axis the active edge will move, beside that edge, in the direction it grows.
+    // Points the arrow out of the hovered face, in the direction a drag grows it.
     const updateArrow = () => {
-      const edge = hintEdge;
-      const group = edge ? (objects.children.find((c) => c.userData.shapeId === edge.shapeId) as Group | undefined) : undefined;
-      const shape = edge ? handlersRef.current.shapes.find((s) => s.id === edge.shapeId) : undefined;
-      if (!edge || !group || !shape) {
+      const face = hintFace;
+      const group = face ? (objects.children.find((c) => c.userData.shapeId === face.shapeId) as Group | undefined) : undefined;
+      const shape = face ? handlersRef.current.shapes.find((s) => s.id === face.shapeId) : undefined;
+      if (!face || !group || !shape) {
         arrow.visible = false;
         return;
       }
-      const index = edgeChoice.get(`${edge.shapeId}|${edge.edgeKey}`) ?? 0;
-      const side = edge.sides[index];
-      const other = edge.sides[1 - index];
-      // Start on the edge itself, where the two faces meet, so the arrow reads as the edge's direction.
-      const corner = new Vector3()
-        .setComponent(side.axis, (side.sign * shape.size[side.axis]) / 2)
-        .setComponent(other.axis, (other.sign * shape.size[other.axis]) / 2);
-      const origin = group.localToWorld(corner);
-      const dir = new Vector3().setComponent(side.axis, side.sign).applyQuaternion(group.quaternion);
+      const { axis, sign } = face.side;
+      const centre = new Vector3().setComponent(axis, (sign * shape.size[axis]) / 2);
+      const origin = group.localToWorld(centre);
+      const dir = new Vector3().setComponent(axis, sign).applyQuaternion(group.quaternion);
       const length = origin.distanceTo(camera.position) * ARROW_SCREEN_SCALE;
-      // Nudge it a little outside the shape, beside the edge, so it does not sit inside the solid.
-      const outward = new Vector3().setComponent(other.axis, other.sign).applyQuaternion(group.quaternion);
-      origin.addScaledVector(outward, length * 0.15);
       arrow.position.copy(origin);
       arrow.setDirection(dir);
       arrow.setLength(length, length * 0.3, length * 0.25);
@@ -469,12 +456,6 @@ export function Viewport(props: ViewportProps) {
     renderer.setAnimationLoop(() => {
       orbit.update();
       updateRoundHighlight();
-      // Keep the edge grabs a constant width on screen, however far the camera is.
-      for (const edge of sceneRef.current?.handles ?? []) {
-        const width = edge.getWorldPosition(scratch).distanceTo(camera.position) * EDGE_SCREEN_SCALE;
-        const along = edge.userData.edgeAlong as number;
-        for (let axis = 0; axis < 3; axis++) if (axis !== along) edge.scale.setComponent(axis, width);
-      }
       placeReadout();
       updateArrow();
       const forward = camera.getWorldDirection(scratch);
@@ -511,63 +492,49 @@ export function Viewport(props: ViewportProps) {
     const shapeById = (id: string) => handlersRef.current.shapes.find((s) => s.id === id);
     const isLocked = (shape: Shape) => handlersRef.current.layers.find((l) => l.id === shape.layerId)?.locked ?? false;
 
-    // The edge grab under the pointer, unless a shape is in front of it.
+    // The face of the selected shape under the pointer, unless another shape is in front of it.
+    // The gizmo's arrows win where they overlap the face.
     const pickHandle = (): Intersection | undefined => {
+      if (transform.axis !== null && transform.axis !== 'XYZ') return undefined;
       const handle = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false)[0];
       if (!handle) return undefined;
       const body = raycaster
         .intersectObjects(objects.children, true)
-        .find((h) => h.object instanceof Mesh && h.object.userData.edgeAlong === undefined);
-      const width = handle.object.getWorldPosition(scratch).distanceTo(camera.position) * EDGE_SCREEN_SCALE;
-      return body && body.distance < handle.distance - width ? undefined : handle;
+        .find((h) => h.object instanceof Mesh && !h.object.userData.face);
+      const tolerance = handle.distance * 0.002;
+      return body && body.distance < handle.distance - tolerance ? undefined : handle;
     };
 
-    // Dragging an edge stretches the shape along one of the two axes that edge moves.
-    // Each click on the edge switches to the other axis. The opposite faces stay where they are.
-    const startResize = (edge: Intersection) => {
-      const sides = edge.object.userData.sides as { axis: number; sign: number }[];
-      const along = edge.object.userData.edgeAlong as number;
-      const group = edge.object.parent as Group;
+    // Dragging a face stretches the shape along that face's axis. The opposite face stays where it is.
+    const startResize = (face: Intersection) => {
+      const side = face.object.userData.side as { axis: number; sign: number };
+      const group = face.object.parent as Group;
       const id = group.userData.shapeId as string;
       const shape = shapeById(id);
       if (!shape) return;
-      // The readout belongs to the selected shape, so an edge of any other shape selects it first.
-      if (handlersRef.current.selection.length !== 1 || handlersRef.current.selection[0] !== id) handlersRef.current.onSelect(id, false);
 
-      const axisDir = new Vector3().setComponent(along, 1).applyQuaternion(group.quaternion);
-      // A plane through the edge that faces the camera, so the mouse moves the edge.
+      const dir = new Vector3().setComponent(side.axis, 1).applyQuaternion(group.quaternion);
+      // A plane through the pointer that holds the face's direction and faces the camera, so the mouse moves the face.
       const cameraDir = camera.getWorldDirection(new Vector3());
-      const normal = cameraDir.clone().sub(axisDir.clone().multiplyScalar(cameraDir.dot(axisDir)));
-      if (normal.lengthSq() < 1e-6) normal.set(axisDir.y > 0.9 ? 1 : 0, axisDir.y > 0.9 ? 0 : 1, 0);
-      const origin = edge.object.getWorldPosition(new Vector3());
-      const plane = new Plane().setFromNormalAndCoplanarPoint(normal.normalize(), origin);
+      const normal = cameraDir.clone().sub(dir.clone().multiplyScalar(cameraDir.dot(dir)));
+      if (normal.lengthSq() < 1e-6) normal.set(dir.y > 0.9 ? 1 : 0, dir.y > 0.9 ? 0 : 1, 0);
+      const plane = new Plane().setFromNormalAndCoplanarPoint(normal.normalize(), face.point);
 
-      const startHit = new Vector3();
-      if (!raycaster.ray.intersectPlane(plane, startHit)) return;
-      const edgeKey = `${id}|${edge.object.userData.key as string}`;
-      const activeIndex = edgeChoice.get(edgeKey) ?? 0;
-      const faceOf = (i: number) => ({
-        axis: sides[i].axis,
-        sign: sides[i].sign,
-        dir: new Vector3().setComponent(sides[i].axis, 1).applyQuaternion(group.quaternion),
-      });
       drag = {
         kind: 'resize',
         moved: false,
         id,
         plane,
-        startHit,
-        sides,
-        activeIndex,
-        edgeKey,
-        faces: [faceOf(activeIndex)],
+        startHit: face.point.clone(),
+        side,
+        faces: [{ axis: side.axis, sign: side.sign, dir }],
         startShape: shape,
-        target: { id, kind: 'resize', sides: [sides[activeIndex]] },
+        target: { id, kind: 'resize', sides: [side] },
       };
       orbit.enabled = false;
       const view = sceneRef.current;
       if (view) {
-        view.activeHandle = handleId(edge.object);
+        view.activeHandle = handleId(face.object);
         paintHandles(view);
       }
     };
@@ -703,11 +670,10 @@ export function Viewport(props: ViewportProps) {
         roundHover = findRoundTarget(event);
         const hovered = pickHandle();
         const key = hovered ? handleId(hovered.object) : null;
-        hintEdge = hovered
+        hintFace = hovered
           ? {
               shapeId: (hovered.object.parent?.userData.shapeId as string) ?? '',
-              edgeKey: (hovered.object.userData.key as string) ?? '',
-              sides: hovered.object.userData.sides as { axis: number; sign: number }[],
+              side: hovered.object.userData.side as { axis: number; sign: number },
             }
           : null;
         const view = sceneRef.current;
@@ -761,13 +727,9 @@ export function Viewport(props: ViewportProps) {
         return;
       }
       if (drag) {
-        // A click on an edge (no drag) switches it to its other axis and shows that value.
-        if (drag.kind === 'resize' && !drag.moved) {
-          const next = 1 - drag.activeIndex;
-          edgeChoice.set(drag.edgeKey, next);
-          handlersRef.current.onReadoutShow({ id: drag.id, kind: 'resize', sides: [drag.sides[next]] });
-        }
-        // After a drag the edge goes dark. After a plain click it stays lit while its readout is open.
+        // A click on a face (no drag) shows its value.
+        if (drag.kind === 'resize' && !drag.moved) handlersRef.current.onReadoutShow({ id: drag.id, kind: 'resize', sides: [drag.side] });
+        // After a drag the face goes dark. After a plain click it stays lit while its readout is open.
         const dragged = drag.moved;
         drag = null;
         if (sceneRef.current) {
@@ -792,7 +754,7 @@ export function Viewport(props: ViewportProps) {
     renderer.domElement.addEventListener('pointermove', onMove);
     renderer.domElement.addEventListener('pointerup', onUp);
     renderer.domElement.addEventListener('pointerleave', () => {
-      if (!drag) hintEdge = null;
+      if (!drag) hintFace = null;
       roundHover = null;
     });
     // A middle press would otherwise start browser auto-scroll.
@@ -872,9 +834,9 @@ export function Viewport(props: ViewportProps) {
         group.add(boundingBox(shape.size, THEMES[theme].outline));
         if (!multi) transform.attach(group);
       }
-      // Edges resize any shape, selected or not. Round mode uses the edges for rounding instead.
-      if (unlocked && !inPivot && !props.roundMode) {
-        for (const handle of makeEdges(shape.size)) {
+      // The faces of the selected shape resize it. Round mode uses the edges for rounding instead.
+      if (unlocked && !multi && selectedSet.has(shape.id) && !props.roundMode) {
+        for (const handle of makeFaces(shape.size)) {
           group.add(handle);
           view.handles.push(handle);
         }
@@ -1061,38 +1023,31 @@ function boundingBox(size: Vec3, color: string): LineSegments {
 }
 
 /**
- * The twelve edges of the dashed box, as invisible grabs. Hovering or pressing one lights it up.
- * Each edge runs along one axis and moves the two faces that meet on it.
+ * The six faces of the dashed box, as invisible grabs. Hovering or pressing one lights up the whole face.
+ * Each face moves along its own axis, so dragging it needs no choice of direction.
  */
-function makeEdges(size: Vec3): Mesh[] {
-  const edges: Mesh[] = [];
-  for (let along = 0; along < 3; along++) {
-    const [a, b] = [0, 1, 2].filter((axis) => axis !== along);
-    for (const signA of [-1, 1]) {
-      for (const signB of [-1, 1]) {
-        const material = new MeshBasicMaterial({
-          color: HANDLE_HOVER_COLOR,
-          transparent: true,
-          opacity: 0,
-          depthTest: false,
-          depthWrite: false,
-        });
-        const mesh = new Mesh(new BoxGeometry(1, 1, 1), material);
-        mesh.position.setComponent(a, (signA * size[a]) / 2);
-        mesh.position.setComponent(b, (signB * size[b]) / 2);
-        mesh.scale.setComponent(along, size[along]);
-        mesh.renderOrder = 10;
-        mesh.userData.edgeAlong = along;
-        mesh.userData.sides = [
-          { axis: a, sign: signA },
-          { axis: b, sign: signB },
-        ];
-        mesh.userData.key = `${along}:${signA}:${signB}`;
-        edges.push(mesh);
-      }
+function makeFaces(size: Vec3): Mesh[] {
+  const faces: Mesh[] = [];
+  for (let axis = 0; axis < 3; axis++) {
+    for (const sign of [-1, 1]) {
+      const material = new MeshBasicMaterial({
+        color: HANDLE_HOVER_COLOR,
+        transparent: true,
+        opacity: 0,
+        depthTest: false,
+        depthWrite: false,
+      });
+      const mesh = new Mesh(new BoxGeometry(1, 1, 1), material);
+      mesh.scale.set(size[0], size[1], size[2]).setComponent(axis, FACE_THICKNESS);
+      mesh.position.setComponent(axis, (sign * size[axis]) / 2);
+      mesh.renderOrder = 10;
+      mesh.userData.face = true;
+      mesh.userData.side = { axis, sign };
+      mesh.userData.key = `${axis}:${sign}`;
+      faces.push(mesh);
     }
   }
-  return edges;
+  return faces;
 }
 
 const MOUSE_ACTION = { rotate: MOUSE.ROTATE, pan: MOUSE.PAN, zoom: MOUSE.DOLLY, none: null } as const;
@@ -1101,18 +1056,18 @@ function mouseButtonsFor(map: MouseMap) {
   return { LEFT: MOUSE_ACTION[map.left], MIDDLE: MOUSE_ACTION[map.middle], RIGHT: MOUSE_ACTION[map.right] };
 }
 
-/** An edge grab's identity across shapes: its shape and its place on the box. */
+/** A face grab's identity across shapes: its shape and its place on the box. */
 function handleId(edge: Object3D): string {
   return `${edge.parent?.userData.shapeId as string}|${edge.userData.key as string}`;
 }
 
-/** Shows the hovered edge lightly, and the pressed edge strongly. */
+/** Shows the hovered face lightly, and the pressed face strongly. */
 function paintHandles(view: { handles: Mesh[]; activeHandle: string | null; hoveredHandle: string | null }) {
   for (const edge of view.handles) {
     const key = handleId(edge);
     const material = edge.material as MeshBasicMaterial;
     material.color.set(key === view.activeHandle ? HANDLE_ACTIVE_COLOR : HANDLE_HOVER_COLOR);
-    material.opacity = key === view.activeHandle ? 0.9 : key === view.hoveredHandle ? 0.5 : 0;
+    material.opacity = key === view.activeHandle ? 0.5 : key === view.hoveredHandle ? 0.28 : 0;
   }
 }
 
