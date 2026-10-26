@@ -92,6 +92,8 @@ interface ViewportProps {
   gizmoMode: GizmoMode;
   dragPlane: DragPlane;
   snap: number;
+  /** Filled every frame with the camera's forward direction on the ground, for the arrow keys. */
+  viewDirRef: { current: [number, number] };
   readout: ReadoutTarget | null;
   result: MeshData | null;
   showResult: boolean;
@@ -434,6 +436,8 @@ export function Viewport(props: ViewportProps) {
       }
       placeReadout();
       updateArrow();
+      const forward = camera.getWorldDirection(scratch);
+      if (Math.hypot(forward.x, forward.z) > 1e-3) props.viewDirRef.current = [forward.x, forward.z];
       renderer.render(scene, camera);
     });
 

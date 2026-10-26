@@ -117,6 +117,8 @@ export default function App() {
   const [snap, setSnap] = useState<number>(1);
   // The move or resize the readout card is showing for the selected shape.
   const [readout, setReadout] = useState<ReadoutTarget | null>(null);
+  // The camera's forward direction on the ground, kept up to date by the viewport.
+  const viewDir = useRef<[number, number]>([0, -1]);
   const openInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -268,6 +270,39 @@ export default function App() {
   const toggleTheme = () => setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
 
   const selectionLocked = selectedShapes.some((s) => layerOf(s.layerId)?.locked);
+
+  // Arrow keys nudge the selection like Tinkercad: on the ground, relative to the
+  // view. Up moves away from the camera, snapped to the nearest axis. Ctrl + up or
+  // down moves the shape up or down. One snap step, ten with Shift, a tenth with Alt.
+  const nudgeSelected = (right: number, forward: number, event: KeyboardEvent) => {
+    const movable = selectedShapes.filter((s) => !layerOf(s.layerId)?.locked);
+    if (movable.length === 0) return;
+    const base = snap > 0 ? snap : 1;
+    const step = event.shiftKey ? base * 10 : event.altKey ? base / 10 : base;
+    const delta: Vec3 = [0, 0, 0];
+    const [fx, fz] = viewDir.current;
+    if (event.ctrlKey || event.metaKey) {
+      delta[1] = forward * step;
+      if (right !== 0) return;
+    } else if (Math.abs(fx) >= Math.abs(fz)) {
+      const sign = Math.sign(fx);
+      delta[0] = forward * sign * step;
+      delta[2] = right * sign * step;
+    } else {
+      const sign = Math.sign(fz);
+      delta[2] = forward * sign * step;
+      delta[0] = -right * sign * step;
+    }
+    const round = (value: number) => Math.round(value * 1e6) / 1e6;
+    const ids = movable.map((s) => s.id);
+    commit({
+      ...project,
+      shapes: project.shapes.map((s) =>
+        ids.includes(s.id) ? { ...s, position: s.position.map((v, i) => round(v + delta[i])) as Vec3 } : s,
+      ),
+    });
+    setReadout(null);
+  };
 
   // Clone the selection.
   const cloneSelected = () => {
@@ -443,6 +478,11 @@ export default function App() {
       } else if (mod && key === 'g') {
         event.preventDefault();
         mergeSelected();
+      } else if (event.key.startsWith('Arrow') && selection.length > 0) {
+        event.preventDefault();
+        const right = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+        const forward = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0;
+        nudgeSelected(right, forward, event);
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         deleteSelected();
       } else if (plain && (key === 'm' || key === 'w')) {
@@ -688,6 +728,7 @@ export default function App() {
           onReadoutEdit={editReadout}
           onReadoutShow={setReadout}
           snap={snap}
+          viewDirRef={viewDir}
           readout={readout}
           onRoundClick={openRound}
           onMarquee={(ids) => setSelection([...selection.filter((x) => !ids.includes(x)), ...ids])}
