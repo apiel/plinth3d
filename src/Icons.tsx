@@ -121,6 +121,16 @@ export function Label({ text, at }: { text: string; at: number }) {
 }
 
 /** A tiny shortcut badge in the corner of an icon button. */
+export function HelpIcon() {
+  return (
+    <Svg>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9.6 9.6a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.6" />
+      <path d="M12 16.6v.1" />
+    </Svg>
+  );
+}
+
 export function KeyHint({ k }: { k: string }) {
   return (
     <span className="key-hint" aria-hidden="true">

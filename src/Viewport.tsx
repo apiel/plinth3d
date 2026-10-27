@@ -35,7 +35,7 @@ import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.j
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { ManifoldToplevel } from 'manifold-3d';
 import type { Layer, Shape, Vec3 } from './model';
-import { localPrimitive, meshData, resizeAlongAxis, shapePosition, shapeQuaternion, modifiedStep, snapTo, type MeshData } from './geometry';
+import { localPrimitive, measureSegments, meshData, resizeAlongAxis, shapePosition, shapeQuaternion, modifiedStep, snapTo, type MeshData } from './geometry';
 
 const DEG_TO_RAD = Math.PI / 180;
 const HOLE_COLOR = '#ff4d4d';
@@ -58,6 +58,9 @@ const HANDLE_ACTIVE_COLOR = '#2f6bff';
 const ARROW_SCREEN_SCALE = 0.12;
 /** Orange stands out on the blue shapes. */
 const ARROW_COLOR = 0xff8a00;
+const MEASURE_COLOR = 0xff8a00;
+/** Width, height, depth and the gap to the plan. */
+const MAX_MEASURE_LINES = 4;
 const DRAG_THRESHOLD = 3;
 /** Thickness of a face grab, in mm. */
 const FACE_THICKNESS = 0.01;
@@ -103,6 +106,8 @@ interface ViewportProps {
   readout: ReadoutTarget | null;
   result: MeshData | null;
   showResult: boolean;
+  /** While true, the selection's dimensions are drawn on top of the scene. */
+  measuring: boolean;
   theme: Theme;
   onSelect: (id: string | null, additive: boolean) => void;
   /** Called once when a drag actually starts changing a shape. Used for one undo step. */
@@ -146,6 +151,7 @@ export function Viewport(props: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const readoutRef = useRef<HTMLDivElement>(null);
   const marqueeRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
   const handlersRef = useRef<ViewportProps>(props);
   handlersRef.current = props;
 
@@ -371,9 +377,55 @@ export function Viewport(props: ViewportProps) {
       cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     };
 
+    // Dimension lines, drawn over everything. The labels are HTML, moved to each line's middle every frame.
+    const measureLines = new LineSegments(
+      new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(MAX_MEASURE_LINES * 6), 3)),
+      new LineBasicMaterial({ color: MEASURE_COLOR, depthTest: false }),
+    );
+    measureLines.renderOrder = 999;
+    measureLines.frustumCulled = false;
+    measureLines.visible = false;
+    scene.add(measureLines);
+    const middle = new Vector3();
+    const placeMeasure = () => {
+      const layer = measureRef.current;
+      if (!layer) return;
+      const h = handlersRef.current;
+      const shown = h.measuring && !h.showResult;
+      const visibleLayers = new Set(h.layers.filter((l) => l.visible).map((l) => l.id));
+      const segments = shown
+        ? measureSegments(
+            h.shapes.filter((s) => h.selection.includes(s.id) && visibleLayers.has(s.layerId) && !s.hidden),
+            camera.position.toArray() as Vec3,
+          )
+        : [];
+      measureLines.visible = segments.length > 0;
+      layer.style.display = segments.length > 0 ? 'block' : 'none';
+      if (segments.length === 0) return;
+      const positions = measureLines.geometry.getAttribute('position') as BufferAttribute;
+      segments.forEach((segment, i) => positions.array.set([...segment.a, ...segment.b], i * 6));
+      positions.needsUpdate = true;
+      measureLines.geometry.setDrawRange(0, segments.length * 2);
+      while (layer.children.length < segments.length) {
+        const label = document.createElement('span');
+        label.className = 'measure-label';
+        layer.appendChild(label);
+      }
+      while (layer.children.length > segments.length) layer.lastChild?.remove();
+      segments.forEach((segment, i) => {
+        const label = layer.children[i] as HTMLElement;
+        if (label.textContent !== segment.label) label.textContent = segment.label;
+        middle.set(...segment.a).add(new Vector3(...segment.b)).multiplyScalar(0.5).project(camera);
+        const onScreen = middle.z < 1;
+        label.style.display = onScreen ? 'block' : 'none';
+        label.style.transform = `translate(-50%, -50%) translate(${((middle.x + 1) / 2) * container.clientWidth}px, ${((1 - middle.y) / 2) * container.clientHeight}px)`;
+      });
+    };
+
     renderer.setAnimationLoop(() => {
       orbit.update();
       placeReadout();
+      placeMeasure();
       updateArrow();
       const forward = camera.getWorldDirection(scratch);
       if (Math.hypot(forward.x, forward.z) > 1e-3) props.viewDirRef.current = [forward.x, forward.z];
@@ -838,6 +890,7 @@ export function Viewport(props: ViewportProps) {
   return (
     <div className="viewport" ref={containerRef}>
       <div className="marquee" ref={marqueeRef} />
+      <div className="measure" ref={measureRef} />
       <div className="readout" ref={readoutRef}>
         {readoutShape && props.readout && (
           <ReadoutFields target={props.readout} shape={readoutShape} step={props.snap} onEdit={props.onReadoutEdit} />

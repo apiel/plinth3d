@@ -6,7 +6,7 @@ import Module, { type Manifold, type ManifoldToplevel, type Mat4 } from 'manifol
 // Import the WASM file's URL explicitly. Without this, the dev server can serve
 // its HTML fallback instead, and the engine never loads.
 import manifoldWasmUrl from 'manifold-3d/manifold.wasm?url';
-import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
+import { Box3, Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { createId, type EdgeSpec, type MeshGeometry, type Shape, type Vec3 } from './model';
 
 const DEG_TO_RAD = Math.PI / 180;
@@ -330,6 +330,165 @@ export function resultMesh(wasm: ManifoldToplevel, shapes: Shape[]): MeshData | 
   } finally {
     manifold.delete();
   }
+}
+
+/** The world-space triangles of some shapes, holes included. */
+function placedMeshes(wasm: ManifoldToplevel, shapes: Shape[]): MeshData[] {
+  return shapes.map((shape) => {
+    const placed = placedPrimitive(wasm, shape);
+    try {
+      return meshData(placed);
+    } finally {
+      placed.delete();
+    }
+  });
+}
+
+/**
+ * How far a vertical ray from (x, y, z) travels before it crosses a triangle of `mesh`, going
+ * down (dir = -1) or up (dir = 1). Only triangles facing the ray count: a point inside a solid
+ * passes through its far side instead of landing on it.
+ */
+function verticalHit(mesh: MeshData, x: number, y: number, z: number, dir: number): number {
+  const p = mesh.positions;
+  const idx = mesh.indices;
+  let best = Infinity;
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+    // Signed area in XZ: its sign gives the side the triangle faces (manifold winds them outward).
+    const abx = p[b] - p[a], abz = p[b + 2] - p[a + 2];
+    const acx = p[c] - p[a], acz = p[c + 2] - p[a + 2];
+    const area = abz * acx - abx * acz;
+    if (area * dir >= 0) continue;
+    // Barycentric coordinates of (x, z) in the projected triangle.
+    const px = x - p[a], pz = z - p[a + 2];
+    const u = (pz * acx - px * acz) / area;
+    const v = (abz * px - abx * pz) / area;
+    if (u < -1e-9 || v < -1e-9 || u + v > 1 + 1e-9) continue;
+    const hitY = p[a + 1] + u * (p[b + 1] - p[a + 1]) + v * (p[c + 1] - p[a + 1]);
+    const distance = (hitY - y) * dir;
+    if (distance > -1e-6 && distance < best) best = distance;
+  }
+  return best;
+}
+
+/** The mesh's bounds, as [min, max] per axis. */
+function bounds(mesh: MeshData): [Vec3, Vec3] {
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < mesh.positions.length; i += 3) {
+    for (let axis = 0; axis < 3; axis++) {
+      min[axis] = Math.min(min[axis], mesh.positions[i + axis]);
+      max[axis] = Math.max(max[axis], mesh.positions[i + axis]);
+    }
+  }
+  return [min, max];
+}
+
+/** Whether two bounds overlap seen from above. */
+function overlapsInPlan([minA, maxA]: [Vec3, Vec3], [minB, maxB]: [Vec3, Vec3]): boolean {
+  return minA[0] <= maxB[0] && minB[0] <= maxA[0] && minA[2] <= maxB[2] && minB[2] <= maxA[2];
+}
+
+/**
+ * How far `moving` drops, as one group, before it rests on the top of a solid among `others`
+ * or on the plan (y = 0). Negative when the group is below the plan and nothing is under it:
+ * then it rises to the plan. Uses the real geometry, so a shape lands on a sphere's top, not
+ * on its bounding box.
+ */
+export function dropDistance(wasm: ManifoldToplevel, moving: Shape[], others: Shape[]): number {
+  const movers = placedMeshes(wasm, moving);
+  const moverBounds = movers.map(bounds);
+  const groupBottom = Math.min(...moverBounds.map(([min]) => min[1]));
+  if (!Number.isFinite(groupBottom)) return 0;
+
+  let drop = groupBottom;
+  for (const support of placedMeshes(wasm, others.filter((s) => !s.hole))) {
+    const supportBounds = bounds(support);
+    movers.forEach((mover, m) => {
+      if (!overlapsInPlan(moverBounds[m], supportBounds)) return;
+      // The moving shape's points coming down onto the support's upward faces...
+      for (let i = 0; i < mover.positions.length; i += 3) {
+        const hit = verticalHit(support, mover.positions[i], mover.positions[i + 1], mover.positions[i + 2], -1);
+        if (hit < drop) drop = hit;
+      }
+      // ...and the support's points coming up into the moving shape's downward faces.
+      for (let i = 0; i < support.positions.length; i += 3) {
+        const hit = verticalHit(mover, support.positions[i], support.positions[i + 1], support.positions[i + 2], 1);
+        if (hit < drop) drop = hit;
+      }
+    });
+  }
+  return drop;
+}
+
+/** One dimension line: its two ends in the scene, and the text that sits on it. */
+export interface MeasureSegment {
+  a: Vec3;
+  b: Vec3;
+  label: string;
+}
+
+const DIMENSION_NAMES = ['W', 'H', 'D'];
+
+function tidy(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/**
+ * The dimension lines for a selection: width, height and depth along the edges meeting at the
+ * corner nearest the eye, and the gap between its lowest point and the plan. One shape is
+ * measured along its own axes; several are measured together, as one box on the scene's axes.
+ */
+export function measureSegments(shapes: Shape[], eye: Vec3): MeasureSegment[] {
+  if (shapes.length === 0) return [];
+  let centre: Vector3;
+  let quaternion: Quaternion;
+  let size: Vec3;
+  if (shapes.length === 1) {
+    centre = shapePosition(shapes[0]);
+    quaternion = shapeQuaternion(shapes[0]);
+    size = shapes[0].size;
+  } else {
+    const box = new Box3();
+    for (const shape of shapes) {
+      const q = shapeQuaternion(shape);
+      for (const corner of boxCorners(shape.size)) box.expandByPoint(corner.applyQuaternion(q).add(shapePosition(shape)));
+    }
+    centre = box.getCenter(new Vector3());
+    quaternion = new Quaternion();
+    size = box.getSize(new Vector3()).toArray() as Vec3;
+  }
+
+  const corners = boxCorners(size).map((c) => c.applyQuaternion(quaternion).add(centre));
+  const eyePoint = new Vector3(...eye);
+  const nearest = corners.reduce((best, c) => (c.distanceTo(eyePoint) < best.distanceTo(eyePoint) ? c : best));
+  const segments: MeasureSegment[] = [0, 1, 2].map((axis) => {
+    const along = new Vector3().setComponent(axis, size[axis]).applyQuaternion(quaternion);
+    // Walk from the nearest corner towards the centre, so the line runs along the body.
+    const toward = Math.sign(along.dot(centre.clone().sub(nearest))) || 1;
+    const end = nearest.clone().addScaledVector(along, toward);
+    return { a: nearest.toArray() as Vec3, b: end.toArray() as Vec3, label: `${DIMENSION_NAMES[axis]} ${tidy(size[axis])}` };
+  });
+
+  const lowest = corners.reduce((best, c) => (c.y < best.y ? c : best));
+  if (Math.abs(lowest.y) > 0.01) {
+    segments.push({
+      a: [lowest.x, 0, lowest.z],
+      b: [lowest.x, lowest.y, lowest.z],
+      label: `${tidy(Math.abs(lowest.y))} ${lowest.y > 0 ? 'above' : 'below'} plan`,
+    });
+  }
+  return segments;
+}
+
+/** The eight corners of a box of this size, centred on the origin. */
+function boxCorners(size: Vec3): Vector3[] {
+  const corners: Vector3[] = [];
+  for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) {
+    corners.push(new Vector3((x * size[0]) / 2, (y * size[1]) / 2, (z * size[2]) / 2));
+  }
+  return corners;
 }
 
 /** Rounds to the nearest step. A step of 0 means no snapping, only tidy decimals. */

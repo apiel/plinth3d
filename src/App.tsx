@@ -5,6 +5,7 @@ import {
   BoxIcon,
   ConeIcon,
   CylinderIcon,
+  HelpIcon,
   KeyHint,
   Label,
   MoonIcon,
@@ -24,10 +25,11 @@ const PRIMITIVES: { type: ShapeType; label: string; key: string; Icon: () => JSX
   { type: 'sphere', label: 'Sphere', key: 'S', Icon: SphereIcon },
   { type: 'cone', label: 'Cone', key: 'K', Icon: ConeIcon },
   { type: 'pyramid', label: 'Pyramid', key: 'P', Icon: PyramidIcon },
-  { type: 'wedge', label: 'Wedge', key: 'D', Icon: WedgeIcon },
+  { type: 'wedge', label: 'Wedge', key: 'V', Icon: WedgeIcon },
   { type: 'torus', label: 'Torus', key: 'T', Icon: TorusIcon },
 ];
 import { LayerPanel } from './LayerPanel';
+import { HelpModal } from './HelpModal';
 import { Inspector } from './Inspector';
 import {
   createId,
@@ -44,7 +46,7 @@ import {
 } from './model';
 import { addLayerFromFile, parseLayer, serializeLayer } from './model';
 import { DEFAULT_MOUSE_MAP, DEFAULT_STEP_KEYS, SettingsMenu, type MouseMap, type StepKeys } from './SettingsMenu';
-import { encodeBinarySTL, loadEngine, mergeShapes, modifiedStep, restoreSources, resizeAlongAxis, resultMesh } from './geometry';
+import { dropDistance, encodeBinarySTL, loadEngine, mergeShapes, modifiedStep, restoreSources, resizeAlongAxis, resultMesh } from './geometry';
 
 const AUTOSAVE_KEY = 'plinth3d:autosave';
 const HISTORY_LIMIT = 100;
@@ -138,6 +140,9 @@ export default function App() {
   const [activeLayerId, setActiveLayerId] = useState<string>(project.layers[0].id);
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>('translate');
   const [showResult, setShowResult] = useState(false);
+  // Z held down: the selection's dimensions are shown.
+  const [measuring, setMeasuring] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [engine, setEngine] = useState<ManifoldToplevel | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
@@ -346,6 +351,23 @@ export default function App() {
     }
   };
 
+  // Drop the selection like Tinkercad's D: straight down onto the shape under it, or onto the plan.
+  const dropSelected = () => {
+    if (selectedShapes.length === 0 || selectionLocked || !engine) return;
+    const ids = selectedShapes.map((s) => s.id);
+    const others = visibleShapes(project).filter((s) => !ids.includes(s.id));
+    const drop = dropDistance(engine, selectedShapes, others);
+    if (Math.abs(drop) < 1e-6) return;
+    const round = (value: number) => Math.round(value * 1000) / 1000;
+    commit({
+      ...project,
+      shapes: project.shapes.map((s) =>
+        ids.includes(s.id) ? { ...s, position: [s.position[0], round(s.position[1] - drop), s.position[2]] as Vec3 } : s,
+      ),
+    });
+    setReadout(null);
+  };
+
   // Clone the selection.
   const cloneSelected = () => {
     if (selectedShapes.length === 0 || selectionLocked) return;
@@ -512,10 +534,29 @@ export default function App() {
     };
   }, []);
 
+  // Z shows the dimensions only while it is held. Losing focus counts as letting go.
+  useEffect(() => {
+    const onUp = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === 'z') setMeasuring(false);
+    };
+    const onBlur = () => setMeasuring(false);
+    window.addEventListener('keyup', onUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keyup', onUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, []);
+
   // Keyboard shortcuts. Ignored while typing in a field.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) return;
+      // The help window owns the keyboard while it is open.
+      if (helpOpen) {
+        if (event.key === 'Escape' || event.key === '?') setHelpOpen(false);
+        return;
+      }
       const mod = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
       // Single letters work alone, without Ctrl or Alt.
@@ -540,6 +581,10 @@ export default function App() {
         nudgeSelected(right, forward, event);
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         deleteSelected();
+      } else if (event.key === '?') {
+        setHelpOpen(true);
+      } else if (plain && key === 'z') {
+        setMeasuring(true);
       } else if (plain && (key === 'm' || key === 'w')) {
         setGizmoMode('translate');
       } else if (plain && (key === 'r' || key === 'e')) {
@@ -560,8 +605,10 @@ export default function App() {
         addShape('cone');
       } else if (plain && key === 'p') {
         addShape('pyramid');
-      } else if (plain && key === 'd') {
+      } else if (plain && key === 'v') {
         addShape('wedge');
+      } else if (plain && key === 'd') {
+        dropSelected();
       } else if (plain && key === 't') {
         addShape('torus');
       } else if (event.key === 'Escape') {
@@ -734,6 +781,15 @@ export default function App() {
         <button
           type="button"
           className="tool-icon"
+          onClick={() => setHelpOpen(true)}
+          aria-label="Keyboard shortcuts"
+          title="Keyboard shortcuts (?)"
+        >
+          <HelpIcon />
+        </button>
+        <button
+          type="button"
+          className="tool-icon"
           onClick={toggleTheme}
           aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
           title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
@@ -803,6 +859,7 @@ export default function App() {
           gizmoMode={gizmoMode}
           result={result}
           showResult={showResult}
+          measuring={measuring}
           theme={theme}
           onSelect={selectShape}
           dragPlane={dragPlane}
@@ -835,6 +892,7 @@ export default function App() {
           onDelete={deleteSelected}
         />
       </aside>
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }

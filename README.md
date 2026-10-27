@@ -79,7 +79,8 @@ npm run build    # type-check and build to dist/
 
 | Key | Action |
 | --- | --- |
-| B / C / S / K / P / D / T | Add a box / cylinder / sphere / cone / pyramid / wedge / torus to the plan |
+| B / C / S / K / P / V / T | Add a box / cylinder / sphere / cone / pyramid / wedge / torus to the plan |
+| D | Drop the selection onto the shape under it, or onto the plan |
 | M / R | Move / rotate tool |
 | G | Merge the selection (Ctrl+G also works) |
 | U | Unmerge: bring back the shapes a merged object was made from |
@@ -88,6 +89,8 @@ npm run build    # type-check and build to dist/
 | Ctrl+D | Clone |
 | Ctrl+Z | Undo |
 | Del | Delete |
+| Z (hold) | Show the width, height and depth of the selection, and its height above the plan |
+| ? | Open the list of shortcuts (also the **?** button in the toolbar) |
 | Esc | Clear the selection |
 
 The shortcut letter is underlined in each label, and icon buttons show it in the corner.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildResult, encodeBinarySTL, loadEngine, localPrimitive, meshData, mergeShapes, modifiedStep } from './geometry';
+import { buildResult, dropDistance, encodeBinarySTL, loadEngine, localPrimitive, measureSegments, meshData, mergeShapes, modifiedStep } from './geometry';
 import { createShape, createProject, type Shape } from './model';
 
 function layerId(): string {
@@ -303,5 +303,74 @@ describe('edges on wedges, cones and pyramids', () => {
     const { plain, cut } = await edged('pyramid', [20, 30, 20], { vertical: none, top: none, bottom: { size: 3, chamfer: true } });
     expect(cut).toBeLessThan(plain);
     expect(cut).toBeGreaterThan(plain * 0.8);
+  });
+
+  describe('dropDistance', () => {
+    it('drops onto the plan when nothing is under the shape', async () => {
+      const wasm = await loadEngine();
+      expect(dropDistance(wasm, [box([10, 10, 10], [0, 25, 0])], [])).toBeCloseTo(20, 3);
+    });
+
+    it('rises to the plan when the shape is below it', async () => {
+      const wasm = await loadEngine();
+      expect(dropDistance(wasm, [box([10, 10, 10], [0, -2, 0])], [])).toBeCloseTo(-7, 3);
+    });
+
+    it('lands on the top of the shape under it', async () => {
+      const wasm = await loadEngine();
+      const base = box([20, 10, 20], [0, 5, 0]);
+      expect(dropDistance(wasm, [box([10, 10, 10], [3, 40, 0])], [base])).toBeCloseTo(25, 3);
+    });
+
+    it('ignores shapes beside it and holes', async () => {
+      const wasm = await loadEngine();
+      const beside = box([10, 10, 10], [50, 5, 0]);
+      const hole = { ...box([20, 10, 20], [0, 5, 0]), hole: true };
+      expect(dropDistance(wasm, [box([10, 10, 10], [0, 40, 0])], [beside, hole])).toBeCloseTo(35, 3);
+    });
+
+    it('lands on the real surface of a sphere, not its bounding box', async () => {
+      const wasm = await loadEngine();
+      const ball = createShape('sphere', layerId(), []);
+      ball.size = [20, 20, 20];
+      ball.position = [0, 10, 0];
+      // A small box off-centre: the sphere surface there is below the sphere's top (y = 20).
+      const drop = dropDistance(wasm, [box([2, 2, 2], [6, 50, 0])], [ball]);
+      const surface = 10 + Math.sqrt(100 - 5 * 5); // the box's nearest bottom corner is at x = 5
+      expect(49 - drop).toBeGreaterThan(surface - 0.3);
+      expect(49 - drop).toBeLessThan(20);
+    });
+  });
+
+  describe('measureSegments', () => {
+    const lengthOf = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+    it('measures width, height and depth of one shape along its own edges', () => {
+      const segments = measureSegments([box([10, 20, 30], [0, 10, 0])], [100, 100, 100]);
+      expect(segments.map((s) => s.label)).toEqual(['W 10', 'H 20', 'D 30']);
+      expect(segments.map((s) => lengthOf(s.a, s.b))).toEqual([10, 20, 30].map((v) => expect.closeTo(v, 5)));
+    });
+
+    it('follows a rotated shape but keeps its size', () => {
+      const shape = box([10, 20, 30], [0, 40, 0]);
+      shape.rotation = [0, 90, 0];
+      const [width] = measureSegments([shape], [100, 100, 100]);
+      expect(width.label).toBe('W 10');
+      // Turned a quarter about Y, the width now runs along Z.
+      expect(width.a[0]).toBeCloseTo(width.b[0], 3);
+      expect(Math.abs(width.a[2] - width.b[2])).toBeCloseTo(10, 3);
+    });
+
+    it('adds the gap to the plan for a shape in the air, and none for one resting on it', () => {
+      const raised = measureSegments([box([10, 10, 10], [0, 25, 0])], [50, 50, 50]);
+      expect(raised[3].label).toBe('20 above plan');
+      const resting = measureSegments([box([10, 10, 10], [0, 5, 0])], [50, 50, 50]);
+      expect(resting).toHaveLength(3);
+    });
+
+    it('measures a selection as one box', () => {
+      const segments = measureSegments([box([10, 10, 10], [0, 5, 0]), box([10, 10, 10], [30, 5, 0])], [100, 100, 100]);
+      expect(segments.map((s) => s.label)).toEqual(['W 40', 'H 10', 'D 10']);
+    });
   });
 });

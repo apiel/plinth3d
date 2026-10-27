@@ -577,3 +577,87 @@ select {
   flex: 1;
   white-space: nowrap;
 }
+
+/* Dimension labels shown while Z is held. They sit over the canvas and never take the pointer. */
+.measure {
+  position: absolute;
+  inset: 0;
+  display: none;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.measure-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 1px 6px;
+  background: var(--panel);
+  border: 1px solid #ff8a00;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* The keyboard shortcuts window. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 10;
+}
+
+.modal {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px 24px;
+  padding: 14px;
+  overflow-y: auto;
+}
+
+.modal-title {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+}
+
+.modal-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.modal-row kbd {
+  flex: none;
+  min-width: 72px;
+  padding: 1px 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: 12px ui-monospace, monospace;
+  text-align: center;
+}
