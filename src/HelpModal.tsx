@@ -33,6 +33,7 @@ const SECTIONS: Section[] = [
     rows: [
       { keys: 'M / W', action: 'Move tool' },
       { keys: 'R / E', action: 'Rotate tool' },
+      { keys: 'X', action: 'Resize tool: drag anywhere on a face' },
       { keys: 'Arrows', action: 'Nudge on the plan, relative to the view' },
       { keys: 'Ctrl+Arrows', action: 'Nudge along the drag plane' },
       { keys: 'Shift / Ctrl / Alt', action: 'Change the snap step (see Settings)' },

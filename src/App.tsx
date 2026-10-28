@@ -589,6 +589,8 @@ export default function App() {
         setGizmoMode('translate');
       } else if (plain && (key === 'r' || key === 'e')) {
         setGizmoMode('rotate');
+      } else if (plain && key === 'x') {
+        setGizmoMode('resize');
       } else if (plain && key === 'g') {
         mergeSelected();
       } else if (plain && key === 'u') {
@@ -661,6 +663,15 @@ export default function App() {
           >
             <Label text="Rotate" at={0} />
             <KeyHint k="R" />
+          </button>
+          <button
+            type="button"
+            className={gizmoMode === 'resize' ? 'toggled' : ''}
+            onClick={() => setGizmoMode('resize')}
+            title="Resize (X): drag anywhere on a face"
+          >
+            <Label text="Resize" at={0} />
+            <KeyHint k="X" />
           </button>
         </div>
         <div className="group segmented" role="group" aria-label="Drag plane">

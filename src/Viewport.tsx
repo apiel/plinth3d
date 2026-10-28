@@ -56,6 +56,11 @@ const HANDLE_HOVER_COLOR = '#9cc2ff';
 const HANDLE_ACTIVE_COLOR = '#2f6bff';
 /** Length of the resize arrow as a fraction of the camera distance. */
 const ARROW_SCREEN_SCALE = 0.12;
+/** The move gizmo's colours for X, Y and Z, and the colour of a hovered cube. */
+const AXIS_COLORS = [0xff3b3b, 0x3bd13b, 0x3b6bff];
+const KNOB_HOVER_COLOR = 0xffff00;
+/** Edge of a resize cube as a fraction of the camera distance. */
+const KNOB_SCREEN_SCALE = 0.02;
 /** Orange stands out on the blue shapes. */
 const ARROW_COLOR = 0xff8a00;
 const MEASURE_COLOR = 0xff8a00;
@@ -84,7 +89,8 @@ const THEMES = {
   light: { background: '#f4f6fa', gridMajor: '#b8c0cc', gridMinor: '#d9dee7', outline: '#1d2129' },
 };
 
-export type GizmoMode = 'translate' | 'rotate';
+/** Resize hides the gizmo and lets a drag anywhere on a face stretch it, never move the shape. */
+export type GizmoMode = 'translate' | 'rotate' | 'resize';
 
 /** A move or resize that the readout card shows and can edit. */
 export type ReadoutTarget =
@@ -165,6 +171,10 @@ export function Viewport(props: ViewportProps) {
     resultGroup: Group;
     grid: GridHelper | null;
     handles: Mesh[];
+    /** The resize gizmo of the selected shape: its axes, and the cubes at their ends. */
+    resizeGizmos: Group[];
+    knobs: Mesh[];
+    hoveredKnob: Mesh | null;
     gizmoDragging: boolean;
     activeHandle: string | null;
     hoveredHandle: string | null;
@@ -309,6 +319,9 @@ export function Viewport(props: ViewportProps) {
       resultGroup,
       grid: null,
       handles: [],
+      resizeGizmos: [],
+      knobs: [],
+      hoveredKnob: null,
       gizmoDragging: false,
       activeHandle: null,
       hoveredHandle: null,
@@ -427,6 +440,7 @@ export function Viewport(props: ViewportProps) {
       placeReadout();
       placeMeasure();
       updateArrow();
+      for (const gizmo of sceneRef.current?.resizeGizmos ?? []) placeResizeGizmo(gizmo, camera);
       const forward = camera.getWorldDirection(scratch);
       if (Math.hypot(forward.x, forward.z) > 1e-3) props.viewDirRef.current = [forward.x, forward.z];
       renderer.render(scene, camera);
@@ -467,6 +481,7 @@ export function Viewport(props: ViewportProps) {
       const group = hit.object.parent;
       const shape = group ? shapeById(group.userData.shapeId as string) : undefined;
       if (!group || !shape) return false;
+      if (handlersRef.current.gizmoMode === 'resize') return true;
       const { axis } = hit.object.userData.side as { axis: number };
       const local = group.worldToLocal(hit.point.clone());
       const [b, c] = [0, 1, 2].filter((i) => i !== axis);
@@ -479,8 +494,14 @@ export function Viewport(props: ViewportProps) {
 
     // The rim of a face under the pointer, unless another shape is in front of it.
     // The gizmo wins where it overlaps the face: its arrows, and the centre where they meet, which moves the shape.
+    const pickKnob = (): Intersection | undefined => {
+      const view = sceneRef.current;
+      return view ? raycaster.intersectObjects(view.knobs, false)[0] : undefined;
+    };
     const pickHandle = (): Intersection | undefined => {
       if (transform.axis !== null) return undefined;
+      const knob = pickKnob();
+      if (knob) return knob;
       const handle = raycaster.intersectObjects(sceneRef.current?.handles ?? [], false).find(inRim);
       if (!handle) return undefined;
       const body = raycaster
@@ -493,7 +514,8 @@ export function Viewport(props: ViewportProps) {
     // Dragging a face stretches the shape along that face's axis. The opposite face stays where it is.
     const startResize = (face: Intersection) => {
       const side = face.object.userData.side as { axis: number; sign: number };
-      const group = face.object.parent as Group;
+      // A resize cube sits in the gizmo group, one level below the shape's group.
+      const group = (face.object.userData.knob ? face.object.parent?.parent : face.object.parent) as Group;
       const id = group.userData.shapeId as string;
       const shape = shapeById(id);
       if (!shape) return;
@@ -593,7 +615,7 @@ export function Viewport(props: ViewportProps) {
       const shape = shapeById(id);
       if (!shape) return;
       if (!handlersRef.current.selection.includes(id)) handlersRef.current.onSelect(id, event.shiftKey);
-      if (!isLocked(shape)) startMove(shape, hit.point);
+      if (!isLocked(shape) && handlersRef.current.gizmoMode !== 'resize') startMove(shape, hit.point);
     };
 
     // The rubber-band rectangle, from where it started to the pointer.
@@ -660,6 +682,13 @@ export function Viewport(props: ViewportProps) {
             }
           : null;
         const view = sceneRef.current;
+        if (view) {
+          const knob = pickKnob()?.object as Mesh | undefined;
+          if (knob !== (view.hoveredKnob ?? undefined)) {
+            view.hoveredKnob = knob ?? null;
+            for (const k of view.knobs) (k.material as MeshBasicMaterial).color.set(k === knob ? KNOB_HOVER_COLOR : AXIS_COLORS[(k.userData.side as { axis: number }).axis]);
+          }
+        }
         if (view && key !== view.hoveredHandle) {
           view.hoveredHandle = key;
           paintHandles(view);
@@ -769,6 +798,9 @@ export function Viewport(props: ViewportProps) {
     transform.detach();
     clearGroup(objects);
     view.handles = [];
+    view.resizeGizmos = [];
+    view.knobs = [];
+    view.hoveredKnob = null;
     view.resultGroup.visible = showResult;
     objects.visible = !showResult;
 
@@ -806,10 +838,16 @@ export function Viewport(props: ViewportProps) {
       const unlocked = !lockedLayers.has(shape.layerId) && !showResult;
       if (selectedSet.has(shape.id) && unlocked) {
         group.add(boundingBox(shape.size, THEMES[theme].outline));
-        if (!multi) transform.attach(group);
+        if (!multi && props.gizmoMode !== 'resize') transform.attach(group);
       }
       // With a selection, only the selected shape resizes; with none, any shape does.
       const facesActive = selectedShapes.length === 0 || (!multi && selectedSet.has(shape.id));
+      if (unlocked && !multi && selectedSet.has(shape.id) && props.gizmoMode === 'resize') {
+        const gizmo = makeResizeGizmo(shape.size);
+        group.add(gizmo);
+        view.resizeGizmos.push(gizmo);
+        view.knobs.push(...(gizmo.children.filter((c) => c.userData.knob) as Mesh[]));
+      }
       if (unlocked && facesActive) {
         for (const handle of makeFaces(shape.size)) {
           group.add(handle);
@@ -817,10 +855,10 @@ export function Viewport(props: ViewportProps) {
         }
       }
     }
-    if (multi && editable && !showResult) transform.attach(pivot);
+    if (multi && editable && !showResult && props.gizmoMode !== 'resize') transform.attach(pivot);
     paintHandles(view);
     // Rotation applies to one shape; a selection only moves.
-    transform.setMode(multi ? 'translate' : props.gizmoMode);
+    transform.setMode(multi || props.gizmoMode === 'resize' ? 'translate' : props.gizmoMode);
   }, [props.engine, props.shapes, props.layers, props.selection, props.showResult, props.gizmoMode, props.theme]);
 
   // The clicked edge stays lit while its readout is open, and goes dark when the readout closes.
@@ -1038,6 +1076,50 @@ function makeFaces(size: Vec3): Mesh[] {
     }
   }
   return faces;
+}
+
+/**
+ * The resize gizmo: three axes through the shape's centre with a cube at each end. A cube resizes the
+ * side it sits on. Sized by placeResizeGizmo every frame, so it keeps its size on screen.
+ */
+function makeResizeGizmo(size: Vec3): Group {
+  const gizmo = new Group();
+  gizmo.userData.size = size;
+  for (let axis = 0; axis < 3; axis++) {
+    const end = new Vector3().setComponent(axis, 1);
+    const line = new LineSegments(
+      new BufferGeometry().setFromPoints([end.clone().negate(), end]),
+      new LineBasicMaterial({ color: AXIS_COLORS[axis], depthTest: false }),
+    );
+    line.renderOrder = 30;
+    line.userData.axis = axis;
+    gizmo.add(line);
+    for (const sign of [-1, 1]) {
+      const knob = new Mesh(new BoxGeometry(1, 1, 1), new MeshBasicMaterial({ color: AXIS_COLORS[axis], depthTest: false }));
+      knob.renderOrder = 31;
+      knob.userData.knob = true;
+      knob.userData.side = { axis, sign };
+      knob.userData.key = `knob${axis}:${sign}`;
+      gizmo.add(knob);
+    }
+  }
+  return gizmo;
+}
+
+/** Puts the cubes just outside the box and scales the gizmo to a fixed share of the view. */
+function placeResizeGizmo(gizmo: Group, camera: PerspectiveCamera) {
+  const size = gizmo.userData.size as Vec3;
+  const unit = gizmo.getWorldPosition(new Vector3()).distanceTo(camera.position) * KNOB_SCREEN_SCALE;
+  for (const child of gizmo.children) {
+    if (child.userData.knob) {
+      const { axis, sign } = child.userData.side as { axis: number; sign: number };
+      child.position.set(0, 0, 0).setComponent(axis, sign * (size[axis] / 2 + unit * 3));
+      child.scale.setScalar(unit);
+    } else {
+      const axis = child.userData.axis as number;
+      child.scale.set(1, 1, 1).setComponent(axis, size[axis] / 2 + unit * 3);
+    }
+  }
 }
 
 const MOUSE_ACTION = { rotate: MOUSE.ROTATE, pan: MOUSE.PAN, zoom: MOUSE.DOLLY, none: null } as const;
