@@ -57,7 +57,7 @@ Switch themes from the toolbar. Your choice is remembered.
 - Hide a shape with its eye button. Hidden shapes are left out of the scene, the result and the export.
 - Rename a shape by double-clicking its name in the layer list.
 - Export a layer with its ⤓ button, and import a layer file with the Import button. An imported layer is added as a new layer.
-- Save and open projects as `.json` files. The project also autosaves in your browser.
+- Save and open projects as `.svg` files (a top-view picture that carries the project data, so an AI assistant can edit it; old `.json` files still open). The project also autosaves in your browser.
 - Undo (`Ctrl+Z`), clone (`Ctrl+D`), delete (`Del`), and clear the selection with `Esc`.
 
 **Output**

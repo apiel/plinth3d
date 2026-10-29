@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import type { ManifoldToplevel } from 'manifold-3d';
 import { Viewport, type DragPlane, type GizmoMode, type ReadoutTarget, type Theme } from './Viewport';
 import {
@@ -28,6 +28,7 @@ const PRIMITIVES: { type: ShapeType; label: string; key: string; Icon: () => JSX
   { type: 'wedge', label: 'Wedge', key: 'V', Icon: WedgeIcon },
   { type: 'torus', label: 'Torus', key: 'T', Icon: TorusIcon },
 ];
+import { projectToSvg, readProjectFile } from './projectfile';
 import { LayerPanel } from './LayerPanel';
 import { HelpModal } from './HelpModal';
 import { Inspector } from './Inspector';
@@ -157,6 +158,7 @@ export default function App() {
   const [readout, setReadout] = useState<ReadoutTarget | null>(null);
   // The camera's forward direction on the ground, kept up to date by the viewport.
   const viewDir = useRef<[number, number]>([0, -1]);
+  const snapshot = useRef<ComponentProps<typeof Viewport>['snapshotRef']['current']>(null);
   const openInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -506,12 +508,12 @@ export default function App() {
   };
 
   const saveProject = () => {
-    downloadBlob(new Blob([serializeProject(project)], { type: 'application/json' }), `${fileBase(project.name, 'plinth3d-project')}.json`);
+    downloadBlob(new Blob([projectToSvg(project, snapshot.current?.() ?? undefined)], { type: 'image/svg+xml' }), `${fileBase(project.name, 'plinth3d-project')}.svg`);
   };
 
   const openProject = async (file: File) => {
     try {
-      const next = parseProject(await file.text());
+      const next = readProjectFile(await file.text());
       setHistory([]);
       setProject(next);
       setActiveLayerId(next.layers[0].id);
@@ -827,7 +829,7 @@ export default function App() {
           <input
             ref={openInput}
             type="file"
-            accept=".json,application/json"
+            accept=".svg,image/svg+xml,.json,application/json"
             hidden
             onChange={(e) => {
               const file = e.target.files?.[0];
@@ -880,6 +882,7 @@ export default function App() {
           onReadoutClose={() => setReadout(null)}
           snap={snap}
           viewDirRef={viewDir}
+          snapshotRef={snapshot}
           readout={readout}
           mouseMap={mouseMap}
           stepKeys={stepKeys}

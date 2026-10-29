@@ -109,6 +109,8 @@ interface ViewportProps {
   snap: number;
   /** Filled every frame with the camera's forward direction on the ground, for the arrow keys. */
   viewDirRef: { current: [number, number] };
+  /** Set to a function that returns the current view as a PNG data URL (and its size), without the gizmos. */
+  snapshotRef: { current: (() => { href: string; width: number; height: number } | null) | null };
   readout: ReadoutTarget | null;
   result: MeshData | null;
   showResult: boolean;
@@ -445,6 +447,19 @@ export function Viewport(props: ViewportProps) {
       if (Math.hypot(forward.x, forward.z) > 1e-3) props.viewDirRef.current = [forward.x, forward.z];
       renderer.render(scene, camera);
     });
+
+    props.snapshotRef.current = () => {
+      const gizmos = sceneRef.current?.resizeGizmos ?? [];
+      const hidden = [transform as unknown as Object3D, ...gizmos].map((o) => [o, o.visible] as const);
+      for (const [o] of hidden) o.visible = false;
+      try {
+        renderer.render(scene, camera);
+        const { width, height } = renderer.domElement;
+        return { href: renderer.domElement.toDataURL('image/png'), width, height };
+      } finally {
+        for (const [o, v] of hidden) o.visible = v;
+      }
+    };
 
     const raycaster = new Raycaster();
     const pointer = new Vector2();
