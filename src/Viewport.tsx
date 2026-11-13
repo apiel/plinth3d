@@ -607,14 +607,14 @@ export function Viewport(props: ViewportProps) {
         startResize(handle);
         return;
       }
-      // A press anywhere but on a face lets go of the clicked face.
-      if (handlersRef.current.readout?.kind === 'resize') handlersRef.current.onReadoutClose();
       // An arrow or plane of the move gizmo is under the pointer: TransformControls handles it.
       // Its centre handle sits on the shape itself, so a press there is a body drag instead.
       if (transform.axis !== null && transform.axis !== 'XYZ') return;
 
       const hit = raycaster.intersectObjects(objects.children, true).find((h) => h.object instanceof Mesh);
       const id = hit ? shapeIdOf(hit.object) : null;
+      // A press on another shape or on empty space closes the readout card. A press on its own shape keeps it.
+      if (handlersRef.current.readout && handlersRef.current.readout.id !== id) handlersRef.current.onReadoutClose();
       if (!hit || !id) {
         // Shift + drag on empty space starts a rubber-band selection. Orbit stays off for this drag.
         if (event.shiftKey) {
@@ -685,8 +685,7 @@ export function Viewport(props: ViewportProps) {
         return;
       }
       if (!drag) {
-        // Hover highlight on the face handles.
-        trackCursor(event);
+        // Hover highlight on the face handles. Hovering does not move the readout card.
         aim(event);
         const hovered = pickHandle();
         const key = hovered ? handleId(hovered.object) : null;
