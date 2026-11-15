@@ -33,7 +33,8 @@ const SECTIONS: Section[] = [
     rows: [
       { keys: 'M / W', action: 'Move tool' },
       { keys: 'R / E', action: 'Rotate tool' },
-      { keys: 'R (hold) + Arrows', action: 'Turn the selected shape, without leaving the current tool' },
+      { keys: 'R (hold)', action: 'Rotate while held, with the mouse or the arrows; release to go back' },
+      { keys: 'R (tap)', action: 'Rotate on; tap again to go back to the previous tool' },
       { keys: 'X', action: 'Resize tool: drag anywhere on a face' },
       { keys: 'Arrows', action: 'Nudge on the plan, relative to the view' },
       { keys: 'Ctrl+Arrows', action: 'Nudge along the drag plane' },

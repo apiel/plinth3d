@@ -51,6 +51,8 @@ import { DEFAULT_MOUSE_MAP, DEFAULT_STEP_KEYS, SettingsMenu, type MouseMap, type
 import { dropDistance, encodeBinarySTL, loadEngine, mergeShapes, modifiedStep, restoreSources, resizeAlongAxis, resultMesh } from './geometry';
 
 const AUTOSAVE_KEY = 'plinth3d:autosave';
+/** Holding R for at least this long counts as a hold, not a tap, in milliseconds. */
+const R_TAP_MS = 250;
 const HISTORY_LIMIT = 100;
 
 function loadAutosave(): Project | null {
@@ -165,10 +167,11 @@ export default function App() {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   // A project file just picked: waiting for the choice between adding it and opening it as new.
   const [pendingOpen, setPendingOpen] = useState<{ fileName: string; project: Project } | null>(null);
-  // R held down: arrows rotate the selection. Set on press, cleared on release.
-  const rHeld = useRef(false);
-  // An arrow was used while R was held, so releasing R does not switch to the rotate tool.
-  const rUsedForRotate = useRef(false);
+  // The R key press in progress: when it started, the mode before it, whether arrows turned the shape,
+  // and the mode a second short tap returns to.
+  const rPress = useRef<{ at: number; before: GizmoMode; arrows: boolean; returnTo: GizmoMode | null } | null>(null);
+  // After a short tap of R (rotate on), the mode the next short tap goes back to.
+  const rTapReturn = useRef<GizmoMode | null>(null);
 
   useEffect(() => {
     const watchdog = setTimeout(() => {
@@ -608,15 +611,33 @@ export default function App() {
     };
   }, []);
 
-  // Letting go of R ends the rotate hold. A tap with no arrows used is the rotate tool, as before.
+  // R on release. Held (or used with the arrows): back to the mode from before the press.
+  // A short tap: rotate stays on, and the next short tap goes back to the earlier mode.
   useEffect(() => {
+    const finish = (press: NonNullable<typeof rPress.current>, held: number) => {
+      if (press.arrows || held >= R_TAP_MS) {
+        setGizmoMode(press.before);
+        return;
+      }
+      if (press.returnTo) {
+        setGizmoMode(press.returnTo);
+        rTapReturn.current = null;
+      } else {
+        rTapReturn.current = press.before;
+      }
+    };
     const onUp = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== 'r') return;
-      if (rHeld.current && !rUsedForRotate.current) setGizmoMode('rotate');
-      rHeld.current = false;
+      const press = rPress.current;
+      if (!press) return;
+      rPress.current = null;
+      finish(press, performance.now() - press.at);
     };
     const onBlur = () => {
-      rHeld.current = false;
+      const press = rPress.current;
+      if (!press) return;
+      rPress.current = null;
+      setGizmoMode(press.before);
     };
     window.addEventListener('keyup', onUp);
     window.addEventListener('blur', onBlur);
@@ -671,10 +692,10 @@ export default function App() {
       } else if (mod && key === 'g') {
         event.preventDefault();
         mergeSelected();
-      } else if (event.key.startsWith('Arrow') && rHeld.current && selection.length > 0) {
-        // R held: the arrows turn the shape. The mode stays as it was.
+      } else if (event.key.startsWith('Arrow') && rPress.current && selection.length > 0) {
+        // R held: the arrows turn the shape, and the release brings the mode back.
         event.preventDefault();
-        rUsedForRotate.current = true;
+        rPress.current.arrows = true;
         const spin = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
         const tilt = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0;
         rotateSelected(spin, tilt, event);
@@ -692,10 +713,13 @@ export default function App() {
       } else if (plain && (key === 'm' || key === 'w')) {
         setGizmoMode('translate');
       } else if (plain && key === 'r') {
-        // Held with the arrows, R turns the shape without changing the mode. A plain tap switches on release.
-        if (!event.repeat) {
-          rHeld.current = true;
-          rUsedForRotate.current = false;
+        // The rotate gizmo shows as soon as R goes down. Release decides: a long press returns to the earlier mode,
+        // a short tap keeps rotate on until the next short tap.
+        if (!event.repeat && !rPress.current) {
+          const returnTo = rTapReturn.current && gizmoMode === 'rotate' ? rTapReturn.current : null;
+          if (!returnTo) rTapReturn.current = null;
+          rPress.current = { at: performance.now(), before: gizmoMode, arrows: false, returnTo };
+          setGizmoMode('rotate');
         }
       } else if (plain && key === 'e') {
         setGizmoMode('rotate');
