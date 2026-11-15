@@ -37,6 +37,7 @@ import {
   createLayer,
   createProject,
   createShape,
+  mergeProject,
   parseProject,
   serializeProject,
   visibleShapes,
@@ -160,6 +161,14 @@ export default function App() {
   const viewDir = useRef<[number, number]>([0, -1]);
   const snapshot = useRef<ComponentProps<typeof Viewport>['snapshotRef']['current']>(null);
   const openInput = useRef<HTMLInputElement>(null);
+  // The shape under the pointer in the layer list, outlined in the scene.
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // A project file just picked: waiting for the choice between adding it and opening it as new.
+  const [pendingOpen, setPendingOpen] = useState<{ fileName: string; project: Project } | null>(null);
+  // R held down: arrows rotate the selection. Set on press, cleared on release.
+  const rHeld = useRef(false);
+  // An arrow was used while R was held, so releasing R does not switch to the rotate tool.
+  const rUsedForRotate = useRef(false);
 
   useEffect(() => {
     const watchdog = setTimeout(() => {
@@ -511,16 +520,79 @@ export default function App() {
     downloadBlob(new Blob([projectToSvg(project, snapshot.current?.() ?? undefined)], { type: 'image/svg+xml' }), `${fileBase(project.name, 'plinth3d-project')}.svg`);
   };
 
+  // Opening a file asks first: add it to the current project, or open it as a new project.
   const openProject = async (file: File) => {
     try {
-      const next = readProjectFile(await file.text());
-      setHistory([]);
-      setProject(next);
-      setActiveLayerId(next.layers[0].id);
-      setSelectedId(null);
+      setPendingOpen({ fileName: file.name, project: readProjectFile(await file.text()) });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not open that file.');
     }
+  };
+
+  const replaceWithPending = () => {
+    if (!pendingOpen) return;
+    const next = pendingOpen.project;
+    setHistory([]);
+    setProject(next);
+    setActiveLayerId(next.layers[0].id);
+    setSelection([]);
+    setReadout(null);
+    setPendingOpen(null);
+  };
+
+  const addPending = () => {
+    if (!pendingOpen) return;
+    const next = mergeProject(project, pendingOpen.project);
+    commit(next);
+    const added = next.layers[project.layers.length];
+    if (added) setActiveLayerId(added.id);
+    setSelection([]);
+    setReadout(null);
+    setPendingOpen(null);
+  };
+
+  // Drop shapes in the list. They go to the layer, and into the list before `beforeId` (another shape in that layer),
+  // or to the end of the layer when there is none. Works for reordering within a layer too.
+  const moveShapesToLayer = (ids: string[], layerId: string, beforeId?: string) => {
+    const target = layerOf(layerId);
+    if (!target || beforeId && ids.includes(beforeId)) return;
+    const candidates = project.shapes.filter((s) => ids.includes(s.id));
+    if (candidates.length === 0) return;
+    const crossing = candidates.filter((s) => s.layerId !== layerId);
+    if (crossing.length > 0 && target.locked) {
+      setNotice(`"${target.name}" is locked. Unlock it to move shapes into it.`);
+      return;
+    }
+    // Shapes on a locked layer stay where they are.
+    const moving = candidates.filter((s) => !layerOf(s.layerId)?.locked).map((s) => s.id);
+    if (moving.length === 0) {
+      setNotice('Those shapes are on a locked layer. Unlock it to move them.');
+      return;
+    }
+    const moved = project.shapes.filter((s) => moving.includes(s.id)).map((s) => ({ ...s, layerId }));
+    const rest = project.shapes.filter((s) => !moving.includes(s.id));
+    let at = beforeId ? rest.findIndex((s) => s.id === beforeId) : -1;
+    if (at < 0) {
+      // The end of the target layer, or the end of the list when the layer is empty.
+      let last = -1;
+      rest.forEach((s, i) => {
+        if (s.layerId === layerId) last = i;
+      });
+      at = last < 0 ? rest.length : last + 1;
+    }
+    commit({ ...project, shapes: [...rest.slice(0, at), ...moved, ...rest.slice(at)] });
+  };
+
+  // R with the arrows: turn the selected shape. Left and right spin it around the vertical axis, up and down tilt it.
+  // Only a single shape turns, as with the rotate gizmo. Shift and Ctrl change the step, as they do for moves.
+  const rotateSelected = (spin: number, tilt: number, event: KeyboardEvent) => {
+    if (!selected || selection.length !== 1 || layerOf(selected.layerId)?.locked) return;
+    const step = modifiedStep(1, stepKeys, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey, alt: event.altKey }) || 1;
+    const round = (value: number) => Math.round(value * 1e6) / 1e6;
+    const rotation = [...selected.rotation] as Vec3;
+    rotation[1] = round(rotation[1] + spin * step);
+    rotation[0] = round(rotation[0] + tilt * step);
+    updateShape(selected.id, { rotation });
   };
 
   useEffect(() => {
@@ -533,6 +605,24 @@ export default function App() {
     return () => {
       window.removeEventListener('keydown', track);
       window.removeEventListener('keyup', track);
+    };
+  }, []);
+
+  // Letting go of R ends the rotate hold. A tap with no arrows used is the rotate tool, as before.
+  useEffect(() => {
+    const onUp = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'r') return;
+      if (rHeld.current && !rUsedForRotate.current) setGizmoMode('rotate');
+      rHeld.current = false;
+    };
+    const onBlur = () => {
+      rHeld.current = false;
+    };
+    window.addEventListener('keyup', onUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keyup', onUp);
+      window.removeEventListener('blur', onBlur);
     };
   }, []);
 
@@ -559,6 +649,11 @@ export default function App() {
         if (event.key === 'Escape' || event.key === '?') setHelpOpen(false);
         return;
       }
+      // The open dialog waits for its choice, so no shortcut runs underneath it.
+      if (pendingOpen) {
+        if (event.key === 'Escape') setPendingOpen(null);
+        return;
+      }
       const mod = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
       // Single letters work alone, without Ctrl or Alt.
@@ -576,6 +671,13 @@ export default function App() {
       } else if (mod && key === 'g') {
         event.preventDefault();
         mergeSelected();
+      } else if (event.key.startsWith('Arrow') && rHeld.current && selection.length > 0) {
+        // R held: the arrows turn the shape. The mode stays as it was.
+        event.preventDefault();
+        rUsedForRotate.current = true;
+        const spin = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+        const tilt = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0;
+        rotateSelected(spin, tilt, event);
       } else if (event.key.startsWith('Arrow') && selection.length > 0) {
         event.preventDefault();
         const right = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
@@ -589,7 +691,13 @@ export default function App() {
         setMeasuring(true);
       } else if (plain && (key === 'm' || key === 'w')) {
         setGizmoMode('translate');
-      } else if (plain && (key === 'r' || key === 'e')) {
+      } else if (plain && key === 'r') {
+        // Held with the arrows, R turns the shape without changing the mode. A plain tap switches on release.
+        if (!event.repeat) {
+          rHeld.current = true;
+          rUsedForRotate.current = false;
+        }
+      } else if (plain && key === 'e') {
         setGizmoMode('rotate');
       } else if (plain && key === 'x') {
         setGizmoMode('resize');
@@ -859,6 +967,9 @@ export default function App() {
             if (!shape.hidden) setSelection(selection.filter((x) => x !== id));
             updateShape(id, { hidden: !shape.hidden });
           }}
+          hoveredId={hoveredId}
+          onHover={setHoveredId}
+          onMoveShapes={moveShapesToLayer}
         />
       </aside>
 
@@ -869,6 +980,8 @@ export default function App() {
           shapes={project.shapes}
           selectedId={selectedId}
           selection={selection}
+          hoveredId={hoveredId}
+          onShapeHover={setHoveredId}
           gizmoMode={gizmoMode}
           result={result}
           showResult={showResult}
@@ -907,6 +1020,38 @@ export default function App() {
         />
       </aside>
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      {pendingOpen && (
+        <div className="modal-backdrop" onPointerDown={() => setPendingOpen(null)}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-label="Open project"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <strong>Open {pendingOpen.fileName}</strong>
+              <button type="button" onClick={() => setPendingOpen(null)}>
+                Cancel
+              </button>
+            </div>
+            <div className="modal-body">
+              <p className="hint">
+                Its {pendingOpen.project.shapes.length} shape{pendingOpen.project.shapes.length === 1 ? '' : 's'} and{' '}
+                {pendingOpen.project.layers.length} layer{pendingOpen.project.layers.length === 1 ? '' : 's'} can go into
+                the current project as new layers, or replace it.
+              </p>
+              <div className="button-row">
+                <button type="button" className="primary" onClick={addPending} title="Keep the current project and add the file's layers and shapes to it">
+                  Add to current project
+                </button>
+                <button type="button" onClick={replaceWithPending} title="Replace the current project with the file's contents">
+                  Open as new project
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

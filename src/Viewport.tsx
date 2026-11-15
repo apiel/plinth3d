@@ -59,6 +59,8 @@ const ARROW_SCREEN_SCALE = 0.12;
 /** The move gizmo's colours for X, Y and Z, and the colour of a hovered cube. */
 const AXIS_COLORS = [0xff3b3b, 0x3bd13b, 0x3b6bff];
 const KNOB_HOVER_COLOR = 0xffff00;
+/** The outline of a shape hovered in the layer list. */
+const HOVER_OUTLINE = '#ffd166';
 /** Edge of a resize cube as a fraction of the camera distance. */
 const KNOB_SCREEN_SCALE = 0.02;
 /** Orange stands out on the blue shapes. */
@@ -104,6 +106,10 @@ interface ViewportProps {
   shapes: Shape[];
   selectedId: string | null;
   selection: string[];
+  /** The shape under the pointer, from the layer list or the scene. It gets an outline and a highlight in the list. */
+  hoveredId: string | null;
+  /** Called when the pointer moves onto or off a shape in the scene. */
+  onShapeHover: (id: string | null) => void;
   gizmoMode: GizmoMode;
   dragPlane: DragPlane;
   snap: number;
@@ -343,6 +349,8 @@ export function Viewport(props: ViewportProps) {
 
     // The face under the pointer. It gets the resize arrow.
     let hintFace: { shapeId: string; side: { axis: number; sign: number } } | null = null;
+    // The shape last reported as under the pointer, so the callback fires only on a change.
+    let lastHoverId: string | null = null;
     const arrow = new ArrowHelper(new Vector3(1, 0, 0), new Vector3(), 10, ARROW_COLOR);
     arrow.visible = false;
     arrow.renderOrder = 20;
@@ -687,6 +695,15 @@ export function Viewport(props: ViewportProps) {
       if (!drag) {
         // Hover highlight on the face handles. Hovering does not move the readout card.
         aim(event);
+        // The shape under the pointer is reported, so the layer list can show it too.
+        const shapeHit = handlersRef.current.showResult
+          ? undefined
+          : raycaster.intersectObjects(objects.children, true).find((h) => h.object instanceof Mesh);
+        const hoverId = shapeHit ? shapeIdOf(shapeHit.object) ?? null : null;
+        if (hoverId !== lastHoverId) {
+          lastHoverId = hoverId;
+          handlersRef.current.onShapeHover(hoverId);
+        }
         const hovered = pickHandle();
         const key = hovered ? handleId(hovered.object) : null;
         hintFace = hovered
@@ -773,6 +790,10 @@ export function Viewport(props: ViewportProps) {
     renderer.domElement.addEventListener('pointerup', onUp);
     renderer.domElement.addEventListener('pointerleave', () => {
       if (!drag) hintFace = null;
+      if (lastHoverId !== null) {
+        lastHoverId = null;
+        handlersRef.current.onShapeHover(null);
+      }
     });
     // A middle press would otherwise start browser auto-scroll.
     const onAuxDown = (event: MouseEvent) => {
@@ -874,6 +895,31 @@ export function Viewport(props: ViewportProps) {
     // Rotation applies to one shape; a selection only moves.
     transform.setMode(multi || props.gizmoMode === 'resize' ? 'translate' : props.gizmoMode);
   }, [props.engine, props.shapes, props.layers, props.selection, props.showResult, props.gizmoMode, props.theme]);
+
+  // A shape hovered in the layer list is outlined in the scene. This only adds or removes the outline,
+  // so the meshes are not rebuilt on every hover. Selected shapes already have their own outline.
+  useEffect(() => {
+    const view = sceneRef.current;
+    if (!view) return;
+    const { objects } = view;
+    const { hoveredId, selection, showResult } = props;
+    const stale: Object3D[] = [];
+    objects.traverse((node) => {
+      if (node.userData.hoverOutline) stale.push(node);
+    });
+    stale.forEach((node) => node.removeFromParent());
+    if (!hoveredId || showResult || selection.includes(hoveredId)) return;
+    objects.traverse((node) => {
+      if (node instanceof Group && node.userData.shapeId === hoveredId) {
+        const outline = boundingBox(
+          props.shapes.find((s) => s.id === hoveredId)?.size ?? [0, 0, 0],
+          HOVER_OUTLINE,
+        );
+        outline.userData.hoverOutline = true;
+        node.add(outline);
+      }
+    });
+  }, [props.hoveredId, props.shapes, props.layers, props.selection, props.showResult]);
 
   // The clicked edge stays lit while its readout is open, and goes dark when the readout closes.
   useEffect(() => {

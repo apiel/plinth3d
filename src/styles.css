@@ -226,6 +226,32 @@ select {
   cursor: pointer;
 }
 
+/* A shape dragged over this layer: it lights up as the drop target. */
+.layer-row.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.sort-row {
+  padding: 0 6px 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Where a dragged shape will land: a line above or below the row. */
+.shape.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.shape.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.shape[draggable='true'] {
+  cursor: grab;
+}
+
 .layer-name {
   flex: 1;
   min-width: 0;
@@ -266,6 +292,12 @@ select {
 }
 
 .shape:hover {
+  background: var(--panel-2);
+}
+
+/* The shape under the pointer in the scene: its row lights up in the scene's outline colour. */
+.shape.hovered {
+  box-shadow: inset 0 0 0 1px #ffd166;
   background: var(--panel-2);
 }
 

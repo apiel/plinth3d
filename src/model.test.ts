@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createProject, createShape, parseProject, serializeProject, visibleShapes } from './model';
+import { createProject, createShape, mergeProject, parseProject, serializeProject, visibleShapes } from './model';
 
 describe('project model', () => {
   it('round-trips a project through JSON', () => {
@@ -19,6 +19,21 @@ describe('project model', () => {
     const shape = createShape('box', 'missing', []);
     const text = serializeProject({ layers: project.layers, shapes: [shape] });
     expect(() => parseProject(text)).toThrow(/unknown layer/);
+  });
+
+  it('merges another project in with new ids, keeping its shapes on their layers', () => {
+    const current = createProject();
+    current.shapes.push(createShape('box', current.layers[0].id, current.shapes));
+    const incoming = createProject();
+    incoming.shapes.push(createShape('sphere', incoming.layers[0].id, incoming.shapes));
+    const merged = mergeProject(current, incoming);
+    expect(merged.layers).toHaveLength(2);
+    expect(merged.shapes).toHaveLength(2);
+    const added = merged.shapes[1];
+    expect(added.id).not.toBe(incoming.shapes[0].id);
+    expect(merged.layers.map((l) => l.id)).toContain(added.layerId);
+    expect(added.layerId).not.toBe(current.layers[0].id);
+    expect(merged.name).toBe(current.name);
   });
 
   it('hides shapes on hidden layers', () => {

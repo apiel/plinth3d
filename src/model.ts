@@ -209,3 +209,11 @@ export function addLayerFromFile(project: Project, parsed: { layer: Layer; shape
   const shapes = parsed.shapes.map((s) => ({ ...withFreshIds(s), layerId: layer.id }));
   return { layers: [...project.layers, layer], shapes: [...project.shapes, ...shapes] };
 }
+
+/** Adds every layer and shape of another project to this one, with new ids throughout. The name stays this project's. */
+export function mergeProject(project: Project, incoming: Project): Project {
+  const layerIds = new Map(incoming.layers.map((l) => [l.id, createId()]));
+  const layers = incoming.layers.map((l) => ({ ...l, id: layerIds.get(l.id) ?? createId() }));
+  const shapes = incoming.shapes.map((s) => ({ ...withFreshIds(s), layerId: layerIds.get(s.layerId) ?? s.layerId }));
+  return { ...project, layers: [...project.layers, ...layers], shapes: [...project.shapes, ...shapes] };
+}
